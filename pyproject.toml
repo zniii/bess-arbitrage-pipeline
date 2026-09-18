@@ -8,6 +8,9 @@ version = "0.1.0"
 description = "Automated BESS Arbitrage and Dispatch Pipeline for UK Power Markets"
 readme = "README.md"
 requires-python = ">=3.10"
+authors = [
+    { name = "Golshan Yakkha" }
+]
 dependencies = [
     "pulp>=2.8.0",
     "pandas>=2.0.0",
@@ -36,8 +39,3 @@ target-version = "py310"
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 pythonpath = ["src"]
-
-[tool.poetry]
-name = "bess-pipeline"
-version = "0.1.0"
-packages = [{ include = "bess_pipeline", from = "src" }]
