@@ -32,9 +32,7 @@ Subject to:
 * **Asset Degradation Penalty ($C_{\text{deg}}$):** Prevents cycling when market spreads are too narrow to justify battery wear.
 ---
 
-# 📊 Output
-
-[![Streamlit App](https://static.streamlit.io/badges/streamlit_badge_black_white.svg)]([https://your-app-name.streamlit.app](https://bess-arbitrage-pipeline-inh4cesyrgajnbrlr3jrke.streamlit.app/))
+# [![Streamlit App](https://static.streamlit.io/badges/streamlit_badge_black_white.svg)]([https://your-app-name.streamlit.app](https://bess-arbitrage-pipeline-inh4cesyrgajnbrlr3jrke.streamlit.app/))
 ---
 
 ## 🚀 Getting Started
