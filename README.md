@@ -31,7 +31,10 @@ Subject to:
   $$\text{SOE}_t = \text{SOE}_{t-1} + \left( P_t^{\text{ch}} \cdot \sqrt{\eta} - \frac{P_t^{\text{dis}}}{\sqrt{\eta}} \right) \cdot \Delta t$$
 * **Asset Degradation Penalty ($C_{\text{deg}}$):** Prevents cycling when market spreads are too narrow to justify battery wear.
 ---
-[![Streamlit App](https://static.streamlit.io/badges/streamlit_badge_black_white.svg)](https://your-app-name.streamlit.app)
+
+# 📊 Output
+
+[![Streamlit App](https://static.streamlit.io/badges/streamlit_badge_black_white.svg)]([https://your-app-name.streamlit.app](https://bess-arbitrage-pipeline-inh4cesyrgajnbrlr3jrke.streamlit.app/))
 ---
 
 ## 🚀 Getting Started
