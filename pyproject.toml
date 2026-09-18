@@ -1,0 +1,37 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "VPP"
+version = "0.1.0"
+description = "Automated BESS Arbitrage and Dispatch Pipeline for UK Power Markets"
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+    "requests>=2.31.0",
+    "pandas>=2.1.0",
+    "python-dotenv>=1.0.0",
+    "pydantic>=2.5.0",
+    "pyarrow>=14.0.0",
+    "boto3>=1.34.0",
+    "duckdb>=0.10.0",
+    "pulp>=2.8.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0.0",
+    "ruff>=0.4.0",
+]
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.ruff]
+line-length = 88
+target-version = "py310"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src"]
