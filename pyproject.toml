@@ -3,7 +3,7 @@ requires = ["setuptools>=61.0"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "VPP"
+name = "bess-arbitrage-pipeline"
 version = "0.1.0"
 description = "Automated BESS Arbitrage and Dispatch Pipeline for UK Power Markets"
 readme = "README.md"
