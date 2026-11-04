@@ -20,57 +20,95 @@ st.set_page_config(
 )
 
 
-@st.cache_data(ttl=300)
-def load_gold_schedules() -> pd.DataFrame:
-    """Queries Gold dispatch schedules directly from S3 using DuckDB."""
+def _connect():
+    """DuckDB connection to S3 (AWS, or MinIO/LocalStack via AWS_ENDPOINT_URL)."""
     con = duckdb.connect()
     con.execute("INSTALL httpfs; LOAD httpfs;")
-    
-    aws_region = os.getenv("AWS_REGION", "eu-west-2")
-    aws_key = os.getenv("AWS_ACCESS_KEY_ID", "")
-    aws_secret = os.getenv("AWS_SECRET_ACCESS_KEY", "")
-    bucket = os.getenv("S3_BUCKET_NAME", "bess-dispatch-datalake-jimee")
+    con.execute("SET s3_region=?", [os.getenv("AWS_REGION", "eu-west-2")])
+    con.execute("SET s3_access_key_id=?", [os.getenv("AWS_ACCESS_KEY_ID", "")])
+    con.execute("SET s3_secret_access_key=?", [os.getenv("AWS_SECRET_ACCESS_KEY", "")])
+    endpoint = os.getenv("AWS_ENDPOINT_URL")
+    if endpoint:
+        host = endpoint.split("://", 1)[-1].rstrip("/")
+        con.execute("SET s3_endpoint=?", [host])
+        con.execute("SET s3_url_style='path'")
+        con.execute("SET s3_use_ssl=?", [endpoint.startswith("https")])
+    return con
 
-    con.execute(f"""
-        SET s3_region='{aws_region}';
-        SET s3_access_key_id='{aws_key}';
-        SET s3_secret_access_key='{aws_secret}';
-    """)
 
-    query = f"""
-        SELECT 
-            settlementDate,
-            interval_start_utc,
-            system_price_gbp,
-            optimal_charge_mw,
-            optimal_discharge_mw,
-            net_dispatch_mw,
-            state_of_energy_mwh
-        FROM read_parquet('s3://{bucket}/gold/dispatch_schedules/**/*.parquet', hive_partitioning = true)
-        ORDER BY interval_start_utc ASC;
-    """
-    return con.execute(query).df()
+def _bucket() -> str:
+    return os.getenv("AWS_S3_BUCKET") or os.getenv("S3_BUCKET_NAME", "")
+
+
+@st.cache_data(ttl=300)
+def load_daily_kpis() -> pd.DataFrame:
+    """One row per settled day: forecast-based vs perfect-foresight profit, EFC, MAE."""
+    return _connect().execute(f"""
+        SELECT * FROM read_parquet('s3://{_bucket()}/gold/daily_kpis/**/*.parquet', hive_partitioning = true)
+        ORDER BY settlementDate
+    """).df()
+
+
+@st.cache_data(ttl=300)
+def load_gold_schedules() -> pd.DataFrame:
+    """Half-hourly dispatch schedules (with the forecast the optimizer used)."""
+    return _connect().execute(f"""
+        SELECT settlementDate, interval_start_utc, system_price_gbp, price_forecast,
+               optimal_charge_mw, optimal_discharge_mw, net_dispatch_mw, state_of_energy_mwh
+        FROM read_parquet('s3://{_bucket()}/gold/dispatch_schedules/**/*.parquet', hive_partitioning = true)
+        ORDER BY interval_start_utc ASC
+    """).df()
 
 
 # -----------------------------------------------------------------------------
 # Header & Data Loading
 # -----------------------------------------------------------------------------
 st.title("⚡ BESS Arbitrage & Dispatch Dashboard")
-st.caption("Wholesale Power Arbitrage & State-of-Charge Monitoring (GB Balancing Mechanism)")
+st.caption("Dispatch optimized on day-ahead FORECAST prices, settled at actual GB system prices")
 
 try:
     df_all = load_gold_schedules()
+    df_kpi = load_daily_kpis()
 except Exception as err:
-    st.error(f"Failed to load Gold schedules from S3: {err}")
+    st.error(f"Failed to load Gold data from S3: {err}")
     st.stop()
 
-if df_all.empty:
-    st.warning("No dispatch schedules found in the Gold data lake.")
+if df_all.empty or df_kpi.empty:
+    st.warning("No dispatch results found in the Gold data lake. Run the daily update first.")
     st.stop()
+
+# -----------------------------------------------------------------------------
+# Period summary (1 day / 7 days / 1 month, ending at the latest settled day)
+# -----------------------------------------------------------------------------
+PERIODS = {"1 day": 1, "7 days": 7, "1 month (30 days)": 30}
+period_label = st.sidebar.radio("Period", list(PERIODS), index=0)
+latest = pd.to_datetime(df_kpi["settlementDate"]).max()
+window = df_kpi[pd.to_datetime(df_kpi["settlementDate"]) > latest - pd.Timedelta(days=PERIODS[period_label])]
+
+st.subheader(f"{period_label} ending {latest:%Y-%m-%d}  ({len(window)} day(s) of data)")
+p_profit = window["profit_gbp"].sum()
+p_perfect = window["perfect_foresight_profit_gbp"].sum()
+p_export = window["export_mwh"].sum()
+c1, c2, c3, c4, c5 = st.columns(5)
+c1.metric("Net Profit (forecast-based)", f"£{p_profit:,.2f}")
+c2.metric("Perfect-Foresight Benchmark", f"£{p_perfect:,.2f}")
+c3.metric("Foresight Captured", f"{(p_profit / p_perfect * 100) if p_perfect else 0:.0f}%")
+c4.metric("Cycles (EFC)", f"{window['equivalent_full_cycles'].sum():.2f}")
+c5.metric("Forecast MAE", f"£{window['forecast_mae_gbp_per_mwh'].mean():.2f}/MWh")
+
+if len(window) > 1:
+    bar = go.Figure()
+    bar.add_bar(x=window["settlementDate"], y=window["profit_gbp"], name="Forecast-based", marker_color="#10b981")
+    bar.add_bar(x=window["settlementDate"], y=window["perfect_foresight_profit_gbp"], name="Perfect foresight", marker_color="#94a3b8")
+    bar.update_layout(barmode="group", height=320, margin=dict(l=20, r=20, t=30, b=20), title="Daily net profit (£)")
+    st.plotly_chart(bar, use_container_width=True)
+
+st.divider()
 
 # -----------------------------------------------------------------------------
 # Date Filtering
 # -----------------------------------------------------------------------------
+st.subheader("Intraday detail")
 available_dates = sorted(df_all["settlementDate"].unique().tolist())
 selected_date = st.sidebar.selectbox("Select Settlement Date", available_dates, index=len(available_dates) - 1)
 
@@ -85,7 +123,9 @@ import_mwh = (df_day["optimal_charge_mw"] * 0.5).sum()
 gross_rev = (df_day["optimal_discharge_mw"] * df_day["system_price_gbp"] * 0.5).sum()
 charge_cost = (df_day["optimal_charge_mw"] * df_day["system_price_gbp"] * 0.5).sum()
 net_margin = gross_rev - charge_cost
-efc = export_mwh / 16.0  # 16 MWh usable DoD (80%)
+ENERGY_MWH = float(os.getenv("BESS_ENERGY_MWH", "20"))
+MIN_SOE, MAX_SOE = 0.1 * ENERGY_MWH, 0.9 * ENERGY_MWH
+efc = export_mwh / (MAX_SOE - MIN_SOE)  # usable depth of discharge
 avg_spread = (net_margin / export_mwh) if export_mwh > 0 else 0.0
 
 col1, col2, col3, col4, col5 = st.columns(5)
@@ -119,7 +159,18 @@ fig.add_trace(
         y=df_day["system_price_gbp"],
         mode="lines",
         line=dict(color="#f59e0b", width=2),
-        name="System Price (£/MWh)",
+        name="Actual System Price (£/MWh)",
+    ),
+    row=1,
+    col=1,
+)
+fig.add_trace(
+    go.Scatter(
+        x=df_day["interval_start_utc"],
+        y=df_day["price_forecast"],
+        mode="lines",
+        line=dict(color="#8b5cf6", width=2, dash="dot"),
+        name="Day-ahead Forecast (£/MWh)",
     ),
     row=1,
     col=1,
@@ -161,8 +212,8 @@ fig.add_trace(
 )
 
 # Add SOC Constraint Boundaries
-fig.add_hline(y=18.0, line_dash="dash", line_color="gray", annotation_text="Max SOC (90%)", row=3, col=1)
-fig.add_hline(y=2.0, line_dash="dash", line_color="gray", annotation_text="Min SOC (10%)", row=3, col=1)
+fig.add_hline(y=MAX_SOE, line_dash="dash", line_color="gray", annotation_text="Max SOC (90%)", row=3, col=1)
+fig.add_hline(y=MIN_SOE, line_dash="dash", line_color="gray", annotation_text="Min SOC (10%)", row=3, col=1)
 
 fig.update_layout(
     height=800,

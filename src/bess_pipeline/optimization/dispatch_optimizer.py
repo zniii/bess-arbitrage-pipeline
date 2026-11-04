@@ -25,19 +25,28 @@ class BESSDispatcher:
         roundtrip_efficiency: float = 0.85,
         min_soc_pct: float = 0.1,
         max_soc_pct: float = 0.9,
+        degradation_cost_gbp_per_mwh: float = 0.0,
     ) -> None:
         self.max_power_mw = max_power_mw
         self.max_energy_mwh = max_energy_mwh
         self.eff = roundtrip_efficiency ** 0.5  # Split efficiency across charge/discharge
         self.min_soc_mwh = max_energy_mwh * min_soc_pct
         self.max_soc_mwh = max_energy_mwh * max_soc_pct
+        # Throughput wear cost (GBP per MWh charged + discharged). 0 disables it.
+        self.degradation_cost = degradation_cost_gbp_per_mwh
 
-    def optimize_schedule(self, df_gold: pd.DataFrame) -> pd.DataFrame:
+    def optimize_schedule(
+        self,
+        df_gold: pd.DataFrame,
+        price_col: str = "system_price_gbp",
+    ) -> pd.DataFrame:
         """
         Computes optimal half-hourly charge/discharge schedule maximizing arbitrage revenue.
 
         Args:
-            df_gold: Gold feature DataFrame containing ['interval_start_utc', 'system_price_gbp']
+            df_gold: Gold feature DataFrame containing ['interval_start_utc', price_col].
+            price_col: Column the optimizer DECIDES on (e.g. a forecast). Settlement
+                against actual prices happens downstream in the KPI step.
 
         Returns:
             pd.DataFrame: Augmented DataFrame with decision variables [charge_mw, discharge_mw, soc_mwh].
@@ -65,9 +74,12 @@ class BESSDispatcher:
         # Objective Function: Maximize total revenue from discharging minus charging costs
         revenue_expr = []
         for t in range(T):
-            price = data.loc[t, "system_price_gbp"]
-            # Revenue from export minus cost of import (accounting for price and efficiency)
-            revenue_expr.append(discharge[t] * price * hours_per_period - charge[t] * price * hours_per_period)
+            price = data.loc[t, price_col]
+            # Revenue from export minus cost of import, minus throughput wear
+            revenue_expr.append(
+                (discharge[t] - charge[t]) * price * hours_per_period
+                - self.degradation_cost * (charge[t] + discharge[t]) * hours_per_period
+            )
         
         prob += pulp.lpSum(revenue_expr)
 

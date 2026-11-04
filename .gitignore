@@ -1,4 +1,3 @@
-cat << 'EOF' > .gitignore
 # Python artifacts
 __pycache__/
 *.py[cod]
@@ -43,4 +42,3 @@ data/
 # IDEs
 .vscode/
 .idea/
-EOF

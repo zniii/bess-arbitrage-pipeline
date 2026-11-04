@@ -29,21 +29,50 @@ Subject to:
 * **Usable Energy Envelope:** $2.0 \text{ MWh} \le \text{SOE}_t \le 18.0 \text{ MWh}$ (enforces 10%–90% SOC operating limits).
 * **Round-Trip Efficiency ($\eta = 0.85$):**
   $$\text{SOE}_t = \text{SOE}_{t-1} + \left( P_t^{\text{ch}} \cdot \sqrt{\eta} - \frac{P_t^{\text{dis}}}{\sqrt{\eta}} \right) \cdot \Delta t$$
-* **Asset Degradation Penalty ($C_{\text{deg}}$):** Prevents cycling when market spreads are too narrow to justify battery wear.
----
+* **Asset Degradation Penalty ($C_{\text{deg}}$):** optional throughput cost (`degradation_cost_gbp_per_mwh` on `BESSDispatcher`, default 0) that prevents cycling when spreads are too narrow to justify battery wear.
 
-# [![Streamlit App](https://static.streamlit.io/badges/streamlit_badge_black_white.svg)]([https://your-app-name.streamlit.app](https://bess-arbitrage-pipeline-inh4cesyrgajnbrlr3jrke.streamlit.app/))
+## 🔮 Forecast-driven dispatch (daily update)
+
+A real operator cannot optimize against prices that have not happened yet, so the daily job does this for every settled day:
+
+1. **Forecast** the 48 half-hourly prices using only information available the morning before (`forecasting/`; every price feature is lagged ≥ 2 days, enforced by a no-lookahead test). Models: a seasonal-naive benchmark (same half-hour last week) and a gradient-boosted regressor (scikit-learn), retrained weekly.
+2. **Optimize** the MILP against the *forecast*.
+3. **Settle** the resulting schedule at the *actual* system price.
+4. Also solve the **perfect-foresight** benchmark, so the dashboard shows how much of the theoretical profit the forecast captures.
+
+Each run writes `gold/dispatch_schedules/` and a one-row-per-day `gold/daily_kpis/` record. The dashboard shows 1-day, 7-day and 30-day views ending at the latest settled day.
+
+> No free hosted API for GB price forecasts was found, so the model is built in-repo. It currently uses lagged prices and calendar features only; Elexon wind/demand forecasts and the NESO Carbon Intensity forecast are the planned exogenous inputs (the feature builder already accepts `wind_forecast_mw`, `demand_forecast_mw`, `carbon_intensity_forecast` columns, but no ingestion for them exists yet).
+
 ---
 
 ## 🚀 Getting Started
 
-### 1. Prerequisites & Installation
-
-Clone the repository and install the project in editable mode:
-
 ```bash
-git clone [https://github.com/your-username/bess-arbitrage-pipeline.git](https://github.com/your-username/bess-arbitrage-pipeline.git)
+git clone https://github.com/zniii/bess-arbitrage-pipeline.git
 cd bess-arbitrage-pipeline
-python -m venv .venv
-source .venv/bin/activate  # On Windows: .venv\Scripts\activate
-pip install -e .
+python -m venv .venv && source .venv/bin/activate   # Windows: .venv\Scripts\activate
+pip install -e ".[dev]"
+cp .env.example .env    # then fill in credentials
+```
+
+### Storage: AWS S3 or local MinIO
+Set `AWS_ENDPOINT_URL=http://localhost:9000` (see `.env.example`) and run `docker compose up -d` followed by `docker compose run --rm create-bucket`; the pipeline and dashboard then use MinIO instead of AWS. Leave `AWS_ENDPOINT_URL` unset to use real S3.
+
+### Run
+```bash
+# Update Gold to the latest settled day (idempotent; backfills any gaps in the window)
+python -m bess_pipeline.orchestration.daily_update --window-days 30
+
+# Original perfect-foresight backtest for specific dates
+python -m bess_pipeline.orchestration.pipeline_runner --start-date 2026-08-01 --end-date 2026-08-03
+
+# Dashboard
+streamlit run app/dashboard.py
+
+# Tests (test_live_small_window_fetch needs internet access to Elexon)
+pytest
+```
+`.github/workflows/daily-update.yml` runs the daily update on a schedule (needs the AWS secrets configured).
+
+> PuLP is pinned `<4`: version 4 removed the `LpVariable(lowBound=...)` API used by the optimizer.
