@@ -31,18 +31,23 @@ Subject to:
   $$\text{SOE}_t = \text{SOE}_{t-1} + \left( P_t^{\text{ch}} \cdot \sqrt{\eta} - \frac{P_t^{\text{dis}}}{\sqrt{\eta}} \right) \cdot \Delta t$$
 * **Asset Degradation Penalty ($C_{\text{deg}}$):** optional throughput cost (`degradation_cost_gbp_per_mwh` on `BESSDispatcher`, default 0) that prevents cycling when spreads are too narrow to justify battery wear.
 
-## 🔮 Forecast-driven dispatch (daily update)
+## 🔮 Strategies and forecasting (daily update)
 
-A real operator cannot optimize against prices that have not happened yet, so the daily job does this for every settled day:
+A real operator cannot optimize against prices that have not happened yet. The daily job runs four strategies per settled day and stores all of them (`strategy` column in `gold/dispatch_schedules/`, one row per day in `gold/daily_kpis/`):
 
-1. **Forecast** the 48 half-hourly prices using only information available the morning before (`forecasting/`; every price feature is lagged ≥ 2 days, enforced by a no-lookahead test). Models: a seasonal-naive benchmark (same half-hour last week) and a gradient-boosted regressor (scikit-learn), retrained weekly.
-2. **Optimize** the MILP against the *forecast*.
-3. **Settle** the resulting schedule at the *actual* system price.
-4. Also solve the **perfect-foresight** benchmark, so the dashboard shows how much of the theoretical profit the forecast captures.
+| Strategy | Optimizes on | Settled at | Role |
+|---|---|---|---|
+| `mid_baseline` | published day-ahead MID price (APX) | MID | **Baseline**: what day-ahead arbitrage earns once the auction result is known |
+| `mid_forecast` | **our own forecast of MID**, made before the ~09:20 auction | actual MID | **Headline model**: how much of the baseline a forecast can capture |
+| `imbalance_forecast` | forecast of the imbalance (system) price | imbalance price | Experimental, toggled in the dashboard |
+| `imbalance_perfect` | actual imbalance prices | imbalance price | Experimental unattainable upper bound |
 
-Each run writes `gold/dispatch_schedules/` and a one-row-per-day `gold/daily_kpis/` record. The dashboard shows 1-day, 7-day and 30-day views ending at the latest settled day.
+Forecasting (`forecasting/`): gradient-boosted regressor (scikit-learn) on calendar features, lagged prices, and Elexon **wind (WINDFOR)** and **national demand (NDFD)** day-ahead forecasts. Everything respects the decision time D-1 08:00 UTC: price lags are >= 1 day for MID and >= 2 days for the imbalance price, and only forecast publications made before the cutoff are used (covered by no-lookahead tests). A seasonal-naive forecaster (same half-hour last week) is the benchmark. The model is retrained weekly.
 
-> No free hosted API for GB price forecasts was found, so the model is built in-repo. It currently uses lagged prices and calendar features only; Elexon wind/demand forecasts and the NESO Carbon Intensity forecast are the planned exogenous inputs (the feature builder already accepts `wind_forecast_mw`, `demand_forecast_mw`, `carbon_intensity_forecast` columns, but no ingestion for them exists yet).
+> No free hosted API for GB price forecasts was found, so the model is built in-repo. The NESO Carbon Intensity forecast was considered as a further feature but is not wired in.
+> MID is not the same price as the imbalance price; the MID strategies assume the battery can trade its schedule in the day-ahead auction at the MID price (no fees, no volume limits).
+
+The dashboard shows 1-day, 7-day and 30-day views ending at the latest settled day. The imbalance models are hidden unless enabled with the sidebar checkbox.
 
 ---
 

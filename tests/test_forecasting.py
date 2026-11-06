@@ -65,3 +65,33 @@ def test_settlement_uses_actual_prices_not_forecast():
     perfect, _ = settle_day(d, day, None, 16.0)
     misled, _ = settle_day(d, day, wrong, 16.0)
     assert misled.net_profit_gbp <= perfect.net_profit_gbp + 1e-6
+
+
+def test_mid_features_allow_1day_lag_but_not_same_day():
+    h = synthetic_history().rename(columns={"system_price_gbp": "mid_price_gbp"})
+    ts = day_timestamps("2026-09-05")
+    base = build_features(h, ts, target_col="mid_price_gbp", min_lag_days=1)
+    assert "price_lag_1d" in base.columns
+    h2 = h.copy()
+    h2.loc[h2["interval_start_utc"] >= ts[0], "mid_price_gbp"] = 1e6  # corrupt delivery day onward
+    pd.testing.assert_frame_equal(base, build_features(h2, ts, target_col="mid_price_gbp", min_lag_days=1))
+
+
+def test_exogenous_uses_only_publications_before_cutoff():
+    from bess_pipeline.forecasting.exogenous import build_exogenous
+
+    ts = day_timestamps("2026-09-05")
+    start = pd.Timestamp("2026-09-05 12:00", tz="UTC")
+    wind = pd.DataFrame({
+        "publishTime": pd.to_datetime(["2026-09-04 06:00", "2026-09-04 09:00", "2026-09-05 06:00"], utc=True),
+        "startTime": [start] * 3,
+        "generation": [1000, 2000, 3000],  # 09:00 and D-day publications are after the 08:00 cutoff
+    })
+    demand = pd.DataFrame({
+        "publishTime": pd.to_datetime(["2026-09-04 07:00", "2026-09-04 15:00"], utc=True),
+        "forecastDate": ["2026-09-05", "2026-09-05"],
+        "demand": [30000, 99999],
+    })
+    ex = build_exogenous(ts, wind, demand).set_index("interval_start_utc")
+    assert ex.loc[start, "wind_forecast_mw"] == 1000
+    assert (ex["demand_forecast_mw"] == 30000).all()

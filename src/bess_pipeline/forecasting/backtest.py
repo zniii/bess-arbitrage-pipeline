@@ -67,11 +67,14 @@ def walk_forward_backtest(
         for name, fcster in forecasters.items():
             day_start = ts[0]
             if name not in last_fit or (day_start - last_fit[name]).days >= retrain_every_days:
-                fcster.fit(hist[hist["interval_start_utc"] < day_start - pd.Timedelta(days=1)])
+                lag = getattr(fcster, "min_lag_days", 2)
+                train = hist[hist["interval_start_utc"] < day_start - pd.Timedelta(days=lag - 1)]
+                fcster.fit(train, exogenous) if exogenous is not None else fcster.fit(train)
                 last_fit[name] = day_start
             fc = fcster.predict(date, hist, exogenous) if exogenous is not None else fcster.predict(date, hist)
             m = actual.merge(fc, on="interval_start_utc", how="left")
-            mae = float((m["system_price_gbp"] - m["price_forecast"]).abs().mean())
+            tcol = getattr(fcster, "target_col", "system_price_gbp")
+            mae = float((m[tcol] - m["price_forecast"]).abs().mean())
             kpi, _ = settle_day(dispatcher, actual, fc, usable)
             rows.append({
                 "date": date,

@@ -33,9 +33,9 @@ def day_timestamps(target_date: str) -> pd.DatetimeIndex:
     return pd.date_range(start, end, freq="30min", inclusive="left")
 
 
-def _available(history: pd.DataFrame, target_date: str) -> pd.DataFrame:
-    """Drop anything not knowable at D-1 morning (i.e. start of D-1 onward)."""
-    cutoff = day_timestamps(target_date)[0] - pd.Timedelta(days=1)
+def _available(history: pd.DataFrame, target_date: str, min_lag_days: int = 2) -> pd.DataFrame:
+    """Drop anything not knowable at D-1 morning (imbalance: D-1 onward; MID: D onward)."""
+    cutoff = day_timestamps(target_date)[0] - pd.Timedelta(days=min_lag_days - 1)
     h = history.copy()
     h["interval_start_utc"] = pd.to_datetime(h["interval_start_utc"], utc=True)
     return h[h["interval_start_utc"] < cutoff]
@@ -44,13 +44,17 @@ def _available(history: pd.DataFrame, target_date: str) -> pd.DataFrame:
 class SeasonalNaiveForecaster:
     name = "seasonal_naive_7d"
 
+    def __init__(self, target_col: str = "system_price_gbp", min_lag_days: int = 2) -> None:
+        self.target_col = target_col
+        self.min_lag_days = min_lag_days
+
     def fit(self, history: pd.DataFrame) -> "SeasonalNaiveForecaster":
         return self
 
     def predict(self, target_date: str, history: pd.DataFrame, exogenous=None) -> pd.DataFrame:
         ts = day_timestamps(target_date)
-        h = _available(history, target_date)
-        s = h.set_index("interval_start_utc")["system_price_gbp"].astype(float)
+        h = _available(history, target_date, self.min_lag_days)
+        s = h.set_index("interval_start_utc")[self.target_col].astype(float)
         s = s[~s.index.duplicated(keep="last")]
         pred = s.reindex(ts - pd.Timedelta(days=LAG_NAIVE_DAYS)).to_numpy()
         out = pd.DataFrame({"interval_start_utc": ts, "price_forecast": pred})
@@ -61,7 +65,12 @@ class SeasonalNaiveForecaster:
 class GBMPriceForecaster:
     name = "gbm"
 
-    def __init__(self, max_iter: int = 200, learning_rate: float = 0.05, random_state: int = 0) -> None:
+    def __init__(self, max_iter: int = 200, learning_rate: float = 0.05, random_state: int = 0,
+                 target_col: str = "system_price_gbp", min_lag_days: int = 2, name: str | None = None) -> None:
+        self.target_col = target_col
+        self.min_lag_days = min_lag_days
+        if name:
+            self.name = name
         self.model = HistGradientBoostingRegressor(
             max_iter=max_iter, learning_rate=learning_rate, random_state=random_state
         )
@@ -70,14 +79,17 @@ class GBMPriceForecaster:
     def fit(self, history: pd.DataFrame, exogenous: pd.DataFrame | None = None) -> "GBMPriceForecaster":
         h = history.copy()
         h["interval_start_utc"] = pd.to_datetime(h["interval_start_utc"], utc=True)
-        X = build_features(h, pd.DatetimeIndex(h["interval_start_utc"]), exogenous)
-        y = h.set_index("interval_start_utc")["system_price_gbp"].astype(float)
+        X = build_features(h, pd.DatetimeIndex(h["interval_start_utc"]), exogenous,
+                           self.target_col, self.min_lag_days)
+        y = h.set_index("interval_start_utc")[self.target_col].astype(float)
         y = y[~y.index.duplicated(keep="last")].reindex(X.index)
-        ok = y.notna() & X["price_lag_2d"].notna()
+        ok = y.notna() & X[f"price_lag_{self.min_lag_days}d"].notna()
         if ok.sum() < 200:
             raise ValueError(f"Need >=200 trainable intervals (~4 days after lags), got {int(ok.sum())}.")
-        self.feature_columns = list(X.columns)
-        self.model.fit(X[ok], y[ok])
+        # An all-NaN column (e.g. wind/demand feed unavailable) breaks sklearn's binning; drop it.
+        keep = [c for c in X.columns if X.loc[ok, c].notna().any()]
+        self.feature_columns = keep
+        self.model.fit(X.loc[ok, keep], y[ok])
         logger.info("Fitted %s on %d intervals.", self.name, int(ok.sum()))
         return self
 
@@ -85,7 +97,8 @@ class GBMPriceForecaster:
         if self.feature_columns is None:
             raise RuntimeError("Call fit() before predict().")
         ts = day_timestamps(target_date)
-        X = build_features(_available(history, target_date), ts, exogenous)
+        X = build_features(_available(history, target_date, self.min_lag_days), ts, exogenous,
+                           self.target_col, self.min_lag_days)
         for c in self.feature_columns:
             if c not in X.columns:
                 X[c] = float("nan")

@@ -2,8 +2,9 @@
 Tests for ElexonClient.
 """
 
-import pytest
 import pandas as pd
+import pytest
+
 from bess_pipeline.ingestion.elexon_client import ElexonClient
 
 

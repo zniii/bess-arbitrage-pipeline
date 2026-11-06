@@ -53,8 +53,8 @@ def load_daily_kpis() -> pd.DataFrame:
 def load_gold_schedules() -> pd.DataFrame:
     """Half-hourly dispatch schedules (with the forecast the optimizer used)."""
     return _connect().execute(f"""
-        SELECT settlementDate, interval_start_utc, system_price_gbp, price_forecast,
-               optimal_charge_mw, optimal_discharge_mw, net_dispatch_mw, state_of_energy_mwh
+        SELECT settlementDate, strategy, interval_start_utc, system_price_gbp, mid_price_gbp,
+               settlement_price_gbp, price_forecast, optimal_charge_mw, optimal_discharge_mw, net_dispatch_mw, state_of_energy_mwh
         FROM read_parquet('s3://{_bucket()}/gold/dispatch_schedules/**/*.parquet', hive_partitioning = true)
         ORDER BY interval_start_utc ASC
     """).df()
@@ -64,7 +64,7 @@ def load_gold_schedules() -> pd.DataFrame:
 # Header & Data Loading
 # -----------------------------------------------------------------------------
 st.title("⚡ BESS Arbitrage & Dispatch Dashboard")
-st.caption("Dispatch optimized on day-ahead FORECAST prices, settled at actual GB system prices")
+st.caption("Headline: dispatch optimized on our day-ahead (MID) price forecast and settled at the actual MID price")
 
 try:
     df_all = load_gold_schedules()
@@ -82,25 +82,41 @@ if df_all.empty or df_kpi.empty:
 # -----------------------------------------------------------------------------
 PERIODS = {"1 day": 1, "7 days": 7, "1 month (30 days)": 30}
 period_label = st.sidebar.radio("Period", list(PERIODS), index=0)
+show_imb = st.sidebar.checkbox("Show imbalance-price models (experimental)", value=False,
+                               help="Optimizes on forecast imbalance prices and settles at the volatile imbalance price.")
 latest = pd.to_datetime(df_kpi["settlementDate"]).max()
 window = df_kpi[pd.to_datetime(df_kpi["settlementDate"]) > latest - pd.Timedelta(days=PERIODS[period_label])]
 
+STRATEGIES = {  # column -> (label, colour, experimental?)
+    "profit_mid_baseline_gbp": ("MID baseline (auction result known)", "#94a3b8", False),
+    "profit_mid_forecast_gbp": ("MID forecast model (ours)", "#10b981", False),
+    "profit_imbalance_forecast_gbp": ("Imbalance forecast model", "#8b5cf6", True),
+    "profit_imbalance_perfect_gbp": ("Imbalance perfect foresight (upper bound)", "#f59e0b", True),
+}
+active = {c: v for c, v in STRATEGIES.items() if (show_imb or not v[2]) and c in window.columns}
+
 st.subheader(f"{period_label} ending {latest:%Y-%m-%d}  ({len(window)} day(s) of data)")
-p_profit = window["profit_gbp"].sum()
-p_perfect = window["perfect_foresight_profit_gbp"].sum()
-p_export = window["export_mwh"].sum()
+p_profit = window["profit_mid_forecast_gbp"].sum()
+p_base = window["profit_mid_baseline_gbp"].sum()
 c1, c2, c3, c4, c5 = st.columns(5)
-c1.metric("Net Profit (forecast-based)", f"£{p_profit:,.2f}")
-c2.metric("Perfect-Foresight Benchmark", f"£{p_perfect:,.2f}")
-c3.metric("Foresight Captured", f"{(p_profit / p_perfect * 100) if p_perfect else 0:.0f}%")
+c1.metric("Net Profit (MID forecast model)", f"£{p_profit:,.2f}")
+c2.metric("MID Baseline", f"£{p_base:,.2f}")
+c3.metric("Baseline Captured", f"{(p_profit / p_base * 100) if p_base else 0:.0f}%")
 c4.metric("Cycles (EFC)", f"{window['equivalent_full_cycles'].sum():.2f}")
-c5.metric("Forecast MAE", f"£{window['forecast_mae_gbp_per_mwh'].mean():.2f}/MWh")
+c5.metric("MID Forecast MAE", f"£{window['mid_forecast_mae_gbp_per_mwh'].mean():.2f}/MWh")
+if show_imb:
+    st.caption(
+        f"Imbalance forecast model: £{window['profit_imbalance_forecast_gbp'].sum():,.2f} "
+        f"(MAE £{window['imbalance_forecast_mae_gbp_per_mwh'].mean():.2f}/MWh) vs perfect-foresight "
+        f"upper bound £{window['profit_imbalance_perfect_gbp'].sum():,.2f}. "
+        "Different settlement price from the MID strategies: not directly comparable."
+    )
 
 if len(window) > 1:
     bar = go.Figure()
-    bar.add_bar(x=window["settlementDate"], y=window["profit_gbp"], name="Forecast-based", marker_color="#10b981")
-    bar.add_bar(x=window["settlementDate"], y=window["perfect_foresight_profit_gbp"], name="Perfect foresight", marker_color="#94a3b8")
-    bar.update_layout(barmode="group", height=320, margin=dict(l=20, r=20, t=30, b=20), title="Daily net profit (£)")
+    for col, (label, colour, _) in active.items():
+        bar.add_bar(x=window["settlementDate"], y=window[col], name=label, marker_color=colour)
+    bar.update_layout(barmode="group", height=340, margin=dict(l=20, r=20, t=30, b=20), title="Daily net profit (£)")
     st.plotly_chart(bar, use_container_width=True)
 
 st.divider()
@@ -112,7 +128,10 @@ st.subheader("Intraday detail")
 available_dates = sorted(df_all["settlementDate"].unique().tolist())
 selected_date = st.sidebar.selectbox("Select Settlement Date", available_dates, index=len(available_dates) - 1)
 
-df_day = df_all[df_all["settlementDate"] == selected_date].copy()
+strategy_options = ["mid_forecast", "mid_baseline"] + (["imbalance_forecast", "imbalance_perfect"] if show_imb else [])
+strategy = st.sidebar.selectbox("Strategy (intraday detail)", strategy_options)
+df_day = df_all[(df_all["settlementDate"] == selected_date) & (df_all["strategy"] == strategy)].copy()
+df_day["system_price_gbp"] = df_day["settlement_price_gbp"]  # price this strategy is settled at
 df_day["interval_start_utc"] = pd.to_datetime(df_day["interval_start_utc"])
 
 # -----------------------------------------------------------------------------
@@ -159,7 +178,7 @@ fig.add_trace(
         y=df_day["system_price_gbp"],
         mode="lines",
         line=dict(color="#f59e0b", width=2),
-        name="Actual System Price (£/MWh)",
+        name="Settlement Price (£/MWh)",
     ),
     row=1,
     col=1,
