@@ -72,8 +72,11 @@ python -m bess_pipeline.orchestration.daily_update --window-days 30
 # Original perfect-foresight backtest for specific dates
 python -m bess_pipeline.orchestration.pipeline_runner --start-date 2026-08-01 --end-date 2026-08-03
 
-# Dashboard
+# Dashboard (live Gold results from S3/MinIO) and the offline "Findings" page (sidebar)
 streamlit run app/dashboard.py
+
+# Regenerate the backtest behind the Findings page (needs internet access to Elexon)
+python scripts/run_backtest_report.py --start 2026-08-01 --end 2026-11-04 --history-start 2026-01-01
 
 # Tests (test_live_small_window_fetch needs internet access to Elexon)
 pytest

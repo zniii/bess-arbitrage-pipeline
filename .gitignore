@@ -42,3 +42,8 @@ data/
 # IDEs
 .vscode/
 .idea/
+
+# Committed backtest results used by the Streamlit Findings page
+!app/data/
+!app/data/*.csv
+!app/data/*.json

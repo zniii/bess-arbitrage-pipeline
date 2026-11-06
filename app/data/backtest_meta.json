@@ -1,0 +1,20 @@
+{
+  "generated_at_utc": "2026-11-06T18:24:48+00:00",
+  "test_start": "2026-08-01",
+  "test_end": "2026-11-04",
+  "history_start": "2026-01-01",
+  "test_days": 96,
+  "retrain_every_days": 14,
+  "battery": {
+    "power_mw": 10.0,
+    "energy_mwh": 20.0,
+    "roundtrip_efficiency": 0.85,
+    "soc_window_pct": [
+      10,
+      90
+    ],
+    "degradation_cost_gbp_per_mwh": 0.0
+  },
+  "decision_time": "D-1 08:00 UTC (before ~09:20 UK day-ahead auction)",
+  "model": "HistGradientBoostingRegressor on calendar, price lags, rolling stats, WINDFOR, NDFD"
+}
