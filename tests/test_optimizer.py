@@ -2,9 +2,11 @@
 Unit tests for the MILP BESS Dispatch Optimizer.
 """
 
-import pytest
 import pandas as pd
+import pytest
+
 from bess_pipeline.optimization.dispatch_optimizer import BESSDispatcher
+
 
 @pytest.fixture
 def dummy_gold_prices():

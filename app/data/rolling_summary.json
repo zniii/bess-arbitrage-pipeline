@@ -1,0 +1,64 @@
+{
+  "price": "N2EX GB day-ahead auction (NESO), hourly, UTC",
+  "assumptions": {
+    "degradation_gbp_per_mwh_discharged": 8.0,
+    "trading_fee_gbp_per_mwh": 0.0,
+    "end_of_day_reserve_mwh": 4.0,
+    "network_levy_charges": "not modelled (unknown)",
+    "terminal_value_gbp_per_mwh": 25.0,
+    "terminal_value_tuning_grid": {
+      "0.0": 32101.07,
+      "25.0": 32101.58,
+      "50.0": 32101.58,
+      "75.0": 32101.58,
+      "100.0": 32101.58,
+      "125.0": 29532.96,
+      "150.0": 22796.17
+    },
+    "tuned_on_days": 39,
+    "evaluated_days": 99,
+    "revenue_share_applied": false
+  },
+  "bridge_gbp": {
+    "perfect_no_costs_daily_reset": 136298.98,
+    "perfect_no_costs_soc_carry": 136579.81,
+    "perfect_after_costs_soc_carry": 117527.14,
+    "achievable_after_costs_soc_carry": 96404.7,
+    "naive_after_costs_soc_carry": 85539.53
+  },
+  "out_of_sample_gbp": {
+    "days": 60,
+    "perfect_after_costs": 78096.46,
+    "achievable_after_costs": 64303.12,
+    "naive_after_costs": 58363.48
+  },
+  "forecast_error_gbp_per_mwh": {
+    "model": 22.16,
+    "naive": 43.13
+  },
+  "achievable_breakdown_gbp": {
+    "revenue_gbp": 421339.24,
+    "charging_cost_gbp": 306542.05,
+    "trading_fees_gbp": 0.0,
+    "degradation_gbp": 18392.49,
+    "net_profit_gbp": 96404.7
+  },
+  "calibration": {
+    "expected_net_gbp": 120598.65,
+    "realised_net_gbp": 96404.7,
+    "realised_over_expected": 0.799
+  },
+  "next_day": {
+    "date": "2026-11-09",
+    "actual_published": false,
+    "expected_revenue_gbp": 10284.16,
+    "expected_charging_cost_gbp": 7869.81,
+    "expected_fees_gbp": 0.0,
+    "expected_degradation_gbp": 236.02,
+    "expected_net_gbp": 2178.33,
+    "start_soc_mwh": 4.0,
+    "end_soc_mwh": 4.0,
+    "realised_net_gbp": null
+  },
+  "last_actual_day": "2026-11-07"
+}

@@ -17,6 +17,7 @@ import os
 from pathlib import Path
 from typing import Optional
 import boto3
+import pandas as pd
 from botocore.exceptions import ClientError
 from dotenv import load_dotenv
 
@@ -33,17 +34,20 @@ class AWSDataLakeManager:
     )-> None:
         """Initialize S3 client using explicit credentials"""
         self.bucket_name = bucket_name or os.getenv("AWS_S3_BUCKET")
-        self.region_name = region_name or os.getenv("AWS_REGION", "ew-west-2")
+        self.region_name = region_name or os.getenv("AWS_REGION", "eu-west-2")
 
         if not self.bucket_name:
             raise ValueError("AWS_S3_BUCKET is not set in environment or config.")
 
         #Initialize boto3 S3 client
+        # Optional custom endpoint lets the same code target MinIO / LocalStack.
+        self.endpoint_url = os.getenv("AWS_ENDPOINT_URL") or None
         self.s3_client = boto3.client(
             "s3",
             region_name=self.region_name,
+            endpoint_url=self.endpoint_url,
             aws_access_key_id=os.getenv("AWS_ACCESS_KEY_ID"),
-            aws_secret_access_key=os.getenv("AWS_SECRET_ACCESS_KEY")
+            aws_secret_access_key=os.getenv("AWS_SECRET_ACCESS_KEY"),
         )
 
     #Raw ingestion to S3
@@ -162,3 +166,52 @@ class AWSDataLakeManager:
         s3_uri = f"s3://{self.bucket_name}/{s3_key}"
         logger.info("Gold dispatch schedule uploaded to %s", s3_uri)
         return s3_uri
+
+    # ------------------------------------------------------------------
+    # Incremental-run helpers (daily update job)
+    # ------------------------------------------------------------------
+    def _list_partition_dates(self, prefix: str) -> set[str]:
+        """Return the settlementDate=YYYY-MM-DD partitions present under a prefix."""
+        dates: set[str] = set()
+        paginator = self.s3_client.get_paginator("list_objects_v2")
+        for page in paginator.paginate(Bucket=self.bucket_name, Prefix=prefix):
+            for obj in page.get("Contents", []):
+                for part in obj["Key"].split("/"):
+                    if part.startswith("settlementDate="):
+                        dates.add(part.split("=", 1)[1])
+        return dates
+
+    def list_silver_dates(self) -> set[str]:
+        return self._list_partition_dates("silver/system_prices/")
+
+    def list_gold_dates(self) -> set[str]:
+        """Dates that already have BOTH a schedule and a daily KPI row."""
+        return self._list_partition_dates("gold/dispatch_schedules/") & self._list_partition_dates(
+            "gold/daily_kpis/"
+        )
+
+    def read_silver_history(self, start_date: str, end_date: str) -> pd.DataFrame:
+        """Load Silver price partitions (inclusive date range) from S3 into one DataFrame."""
+        import io
+
+        frames = []
+        for d in sorted(self.list_silver_dates()):
+            if not (start_date <= d <= end_date):
+                continue
+            key = f"silver/system_prices/settlementDate={d}/part-0.parquet"
+            body = self.s3_client.get_object(Bucket=self.bucket_name, Key=key)["Body"].read()
+            df = pd.read_parquet(io.BytesIO(body))
+            df["settlementDate"] = d
+            frames.append(df)
+        return pd.concat(frames, ignore_index=True) if frames else pd.DataFrame()
+
+    def upload_daily_kpis_to_s3(self, kpi_row: dict, settlement_date: str) -> str:
+        """Write one-row daily KPI table: gold/daily_kpis/settlementDate=D/kpis.parquet."""
+        import io
+
+        df = pd.DataFrame([kpi_row])
+        buffer = io.BytesIO()
+        df.to_parquet(buffer, compression="snappy", index=False)
+        s3_key = f"gold/daily_kpis/settlementDate={settlement_date}/kpis.parquet"
+        self.s3_client.put_object(Bucket=self.bucket_name, Key=s3_key, Body=buffer.getvalue())
+        return f"s3://{self.bucket_name}/{s3_key}"

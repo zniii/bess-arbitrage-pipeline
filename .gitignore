@@ -1,4 +1,3 @@
-cat << 'EOF' > .gitignore
 # Python artifacts
 __pycache__/
 *.py[cod]
@@ -43,4 +42,8 @@ data/
 # IDEs
 .vscode/
 .idea/
-EOF
+
+# Committed backtest results used by the Streamlit Findings page
+!app/data/
+!app/data/*.csv
+!app/data/*.json

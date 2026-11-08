@@ -19,10 +19,10 @@ Data Contract & Endpoint Notes:
   systemSellPrice == systemBuyPrice in almost all operational scenarios.
 """
 
-from datetime import datetime, timedelta
 import logging
 import time
-from typing import Optional
+from datetime import datetime, timedelta
+
 import pandas as pd
 import requests
 
@@ -71,7 +71,7 @@ class ElexonClient:
             "User-Agent": "BESS-Dispatch-Pipeline/0.1.0",
         })
 
-    def _get_daily_prices(self, date_str: str) -> Optional[list[dict]]:
+    def _get_daily_prices(self, date_str: str) -> list[dict] | None:
         """
         Fetches all half-hourly settlement periods for a single target calendar day.
 
@@ -214,3 +214,77 @@ class ElexonClient:
         """
         records = self._get_daily_prices(date_str)
         return records or []
+    # ------------------------------------------------------------------
+    # Dataset endpoints (verified live): MID, WINDFOR, NDFD
+    # ------------------------------------------------------------------
+    DATASETS_URL: str = "https://data.elexon.co.uk/bmrs/api/v1/datasets"
+
+    def _get_dataset(self, dataset: str, params: dict) -> list[dict]:
+        """GET /datasets/{dataset} with the same 429/5xx retry policy as system prices."""
+        url = f"{self.DATASETS_URL}/{dataset}"
+        for attempt in range(1, self.max_retries + 1):
+            try:
+                resp = self.session.get(url, params={**params, "format": "json"}, timeout=self.timeout)
+                if resp.status_code == 429:
+                    time.sleep(self.backoff_factor ** attempt)
+                    continue
+                resp.raise_for_status()
+                return resp.json().get("data", [])
+            except requests.exceptions.RequestException as err:
+                if attempt == self.max_retries:
+                    logger.critical("Exhausted retries for dataset %s: %s", dataset, err)
+                    raise
+                time.sleep(self.backoff_factor ** attempt)
+        return []
+
+    def _chunked(self, dataset: str, start: str, end: str, from_key: str, to_key: str,
+                 chunk_days: int = 7) -> pd.DataFrame:
+        """Pull [start, end) in <=7-day windows (API range limit) and concatenate."""
+        cur = datetime.strptime(start, "%Y-%m-%d")
+        stop = datetime.strptime(end, "%Y-%m-%d")
+        rows: list[dict] = []
+        while cur < stop:
+            nxt = min(cur + timedelta(days=chunk_days), stop)
+            rows += self._get_dataset(dataset, {
+                from_key: cur.strftime("%Y-%m-%dT%H:%MZ"),
+                to_key: nxt.strftime("%Y-%m-%dT%H:%MZ"),
+            })
+            cur = nxt
+            time.sleep(0.2)
+        return pd.DataFrame(rows)
+
+    def fetch_mid(self, start: str, end: str) -> pd.DataFrame:
+        """
+        Market Index Data, half-hourly, [start, end) in UTC days.
+
+        Only the APX provider is kept: N2EX reports price 0 / volume 0 in live data.
+        Returns ['interval_start_utc', 'mid_price_gbp', 'mid_volume_mwh'].
+        """
+        df = self._chunked("MID", start, end, "from", "to")
+        if df.empty:
+            return pd.DataFrame(columns=["interval_start_utc", "mid_price_gbp", "mid_volume_mwh"])
+        df = df[df["dataProvider"] == "APXMIDP"]
+        out = pd.DataFrame({
+            "interval_start_utc": pd.to_datetime(df["startTime"], utc=True),
+            "mid_price_gbp": df["price"].astype(float),
+            "mid_volume_mwh": df["volume"].astype(float),
+        })
+        return out.drop_duplicates("interval_start_utc", keep="last").sort_values("interval_start_utc").reset_index(drop=True)
+
+    def fetch_wind_forecasts(self, start: str, end: str) -> pd.DataFrame:
+        """All WINDFOR publications with publishTime in [start, end): publishTime, startTime, generation."""
+        df = self._chunked("WINDFOR", start, end, "publishDateTimeFrom", "publishDateTimeTo")
+        if df.empty:
+            return pd.DataFrame(columns=["publishTime", "startTime", "generation"])
+        df["publishTime"] = pd.to_datetime(df["publishTime"], utc=True)
+        df["startTime"] = pd.to_datetime(df["startTime"], utc=True)
+        return df[["publishTime", "startTime", "generation"]]
+
+    def fetch_demand_forecasts(self, start: str, end: str) -> pd.DataFrame:
+        """All NDFD (national day-ahead demand forecast) publications: publishTime, forecastDate, demand."""
+        df = self._chunked("NDFD", start, end, "publishDateTimeFrom", "publishDateTimeTo")
+        if df.empty:
+            return pd.DataFrame(columns=["publishTime", "forecastDate", "demand"])
+        df["publishTime"] = pd.to_datetime(df["publishTime"], utc=True)
+        df["forecastDate"] = pd.to_datetime(df["forecastDate"])
+        return df[["publishTime", "forecastDate", "demand"]]

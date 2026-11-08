@@ -27,8 +27,12 @@ MSCK REPAIR TABLE bess_analytics.silver_system_prices;
 
 -- 3. Gold BESS Optimal Dispatch Schedules Table
 CREATE EXTERNAL TABLE IF NOT EXISTS bess_analytics.gold_dispatch_schedules (
+    strategy STRING,
     interval_start_utc TIMESTAMP,
     system_price_gbp DOUBLE,
+    da_price_gbp DOUBLE,
+    settlement_price_gbp DOUBLE,
+    price_forecast DOUBLE,
     optimal_charge_mw DOUBLE,
     optimal_discharge_mw DOUBLE,
     net_dispatch_mw DOUBLE,
@@ -49,3 +53,27 @@ TBLPROPERTIES (
 
 -- Discover newly written gold partitions in S3
 MSCK REPAIR TABLE bess_analytics.gold_dispatch_schedules;
+
+-- 4. Gold daily KPIs (one row per settled day)
+CREATE EXTERNAL TABLE IF NOT EXISTS bess_analytics.gold_daily_kpis (
+    forecaster_da STRING,
+    forecaster_imbalance STRING,
+    da_forecast_mae_gbp_per_mwh DOUBLE,
+    imbalance_forecast_mae_gbp_per_mwh DOUBLE,
+    profit_gbp DOUBLE,
+    profit_da_perfect_gbp DOUBLE,
+    profit_da_forecast_gbp DOUBLE,
+    profit_imbalance_forecast_gbp DOUBLE,
+    profit_imbalance_perfect_gbp DOUBLE,
+    gross_revenue_gbp DOUBLE,
+    charging_cost_gbp DOUBLE,
+    export_mwh DOUBLE,
+    import_mwh DOUBLE,
+    equivalent_full_cycles DOUBLE,
+    avg_capture_spread_gbp_per_mwh DOUBLE
+)
+PARTITIONED BY (settlementDate STRING)
+STORED AS PARQUET
+LOCATION 's3://bess-dispatch-datalake-jimee/gold/daily_kpis/';
+
+MSCK REPAIR TABLE bess_analytics.gold_daily_kpis;

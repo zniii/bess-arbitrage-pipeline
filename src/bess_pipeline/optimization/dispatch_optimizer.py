@@ -9,6 +9,7 @@ given pricing horizon, respecting capacity, power ratings, and round-trip effici
 """
 
 import logging
+
 import pandas as pd
 import pulp
 
@@ -25,19 +26,46 @@ class BESSDispatcher:
         roundtrip_efficiency: float = 0.85,
         min_soc_pct: float = 0.1,
         max_soc_pct: float = 0.9,
+        degradation_cost_gbp_per_mwh: float = 0.0,
+        trading_fee_gbp_per_mwh: float = 0.0,
+        end_soc_min_mwh: float | None = None,
+        terminal_value_gbp_per_mwh: float = 0.0,
     ) -> None:
+        """
+        Args:
+            degradation_cost_gbp_per_mwh: wear cost per MWh DISCHARGED (grid side). Derive it as
+                battery capex (GBP/MWh) / (warranted full cycles x depth of discharge).
+            trading_fee_gbp_per_mwh: exchange / route-to-market fee on every MWh bought or sold.
+            end_soc_min_mwh: state of energy that must remain at the END of the optimized horizon
+                (reserve so the next day can start charged). Defaults to the minimum SOC.
+            terminal_value_gbp_per_mwh: value placed on each MWh left in the battery at the end of
+                the horizon (stored energy can be sold tomorrow). 0 = no value.
+        """
         self.max_power_mw = max_power_mw
         self.max_energy_mwh = max_energy_mwh
         self.eff = roundtrip_efficiency ** 0.5  # Split efficiency across charge/discharge
         self.min_soc_mwh = max_energy_mwh * min_soc_pct
         self.max_soc_mwh = max_energy_mwh * max_soc_pct
+        self.degradation_cost = degradation_cost_gbp_per_mwh
+        self.trading_fee = trading_fee_gbp_per_mwh
+        self.end_soc_min_mwh = self.min_soc_mwh if end_soc_min_mwh is None else end_soc_min_mwh
+        self.terminal_value = terminal_value_gbp_per_mwh
 
-    def optimize_schedule(self, df_gold: pd.DataFrame) -> pd.DataFrame:
+    def optimize_schedule(
+        self,
+        df_gold: pd.DataFrame,
+        price_col: str = "system_price_gbp",
+        initial_soc_mwh: float | None = None,
+    ) -> pd.DataFrame:
         """
         Computes optimal half-hourly charge/discharge schedule maximizing arbitrage revenue.
 
         Args:
-            df_gold: Gold feature DataFrame containing ['interval_start_utc', 'system_price_gbp']
+            df_gold: Gold feature DataFrame containing ['interval_start_utc', price_col].
+            price_col: Column the optimizer DECIDES on (e.g. a forecast). Settlement
+                against actual prices happens downstream in the KPI step.
+            initial_soc_mwh: starting state of energy (e.g. the previous day's end SOC).
+                Defaults to the minimum SOC; clipped into the allowed window.
 
         Returns:
             pd.DataFrame: Augmented DataFrame with decision variables [charge_mw, discharge_mw, soc_mwh].
@@ -65,14 +93,21 @@ class BESSDispatcher:
         # Objective Function: Maximize total revenue from discharging minus charging costs
         revenue_expr = []
         for t in range(T):
-            price = data.loc[t, "system_price_gbp"]
-            # Revenue from export minus cost of import (accounting for price and efficiency)
-            revenue_expr.append(discharge[t] * price * hours_per_period - charge[t] * price * hours_per_period)
+            price = data.loc[t, price_col]
+            # Revenue from export minus cost of import, minus throughput wear
+            revenue_expr.append(
+                (discharge[t] - charge[t]) * price * hours_per_period
+                - self.degradation_cost * discharge[t] * hours_per_period
+                - self.trading_fee * (charge[t] + discharge[t]) * hours_per_period
+            )
         
-        prob += pulp.lpSum(revenue_expr)
+        prob += pulp.lpSum(revenue_expr) + self.terminal_value * soc[T - 1]
 
         # Constraints
-        initial_soc = self.min_soc_mwh  # Start day at minimum safe SOC
+        initial_soc = self.min_soc_mwh if initial_soc_mwh is None else initial_soc_mwh
+        initial_soc = min(max(initial_soc, self.min_soc_mwh), self.max_soc_mwh)
+        # Reserve at the end of the horizon (reachable: it is within the SOC window)
+        prob += soc[T - 1] >= min(self.end_soc_min_mwh, self.max_soc_mwh)
 
         for t in range(T):
             # 1. Mutually exclusive charge/discharge limits using binary indicators
