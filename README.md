@@ -22,13 +22,6 @@ Walk-forward backtest on the **N2EX GB day-ahead auction price**, 99 days (1 Aug
 
 ## The app
 
-Two offline Streamlit pages read pre-computed results from `app/data/`, so they run without AWS credentials.
-
-<!-- TODO: add screenshots to docs/images/ and keep the links below -->
-| Max Revenue (main dashboard) | Findings |
-|---|---|
-| ![Max Revenue page](docs/images/max_revenue.png) | ![Findings page](docs/images/findings.png) |
-
 * **Max Revenue**: the day-ahead forecast and the resulting charge/discharge plan for any day (expected revenue, charging cost, degradation and fees, net profit), 1/7/30-day revenue history, and a waterfall from the theoretical maximum to the achievable result with a degradation × fee sensitivity grid.
 * **Findings**: does a forecast capture day-ahead arbitrage? Cumulative profit versus perfect foresight and the naive benchmark, forecast error by month, and forecast vs actual for any day.
 
