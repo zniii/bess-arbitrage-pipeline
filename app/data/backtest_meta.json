@@ -1,8 +1,8 @@
 {
-  "generated_at_utc": "2026-11-08T09:28:24+00:00",
+  "generated_at_utc": "2026-11-08T09:46:45+00:00",
   "test_start": "2026-08-01",
   "test_end": "2026-11-07",
-  "history_start": "2026-01-01",
+  "history_start": "2021-09-20",
   "test_days": 99,
   "retrain_every_days": 14,
   "battery": {
@@ -12,9 +12,9 @@
     "soc_window_pct": [
       10,
       90
-    ],
-    "degradation_cost_gbp_per_mwh": 0.0
+    ]
   },
-  "decision_time": "D-1 08:00 UTC (before ~09:20 UK day-ahead auction)",
-  "model": "HistGradientBoostingRegressor on calendar, price lags, rolling stats, WINDFOR, NDFD"
+  "price": "N2EX GB day-ahead auction (NESO), hourly, UTC",
+  "decision_time": "D-1 08:00 UTC (before the ~09:20 UK day-ahead auction); yesterday's auction prices are public by then",
+  "model": "HistGradientBoostingRegressor on calendar, day-ahead price lags (>=1 day), rolling stats, WINDFOR, NDFD"
 }

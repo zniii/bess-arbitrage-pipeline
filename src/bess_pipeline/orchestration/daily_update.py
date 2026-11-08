@@ -4,11 +4,11 @@ Daily incremental update: bring Gold up to the most recent settled day.
 For every UK day in the trailing ``--window-days`` window (ending yesterday, the
 latest fully settled day) that has no Gold schedule + KPI row yet:
   1. ingest Bronze/Silver imbalance prices if missing (plus ``--history-days`` of
-     warm-up history), and fetch MID index prices plus wind/demand forecasts,
-  2. forecast MID a day ahead (our model) and, experimentally, the imbalance price,
+     warm-up history), and fetch N2EX day-ahead auction prices (NESO) plus wind/demand forecasts,
+  2. forecast the day-ahead price (our model) and, experimentally, the imbalance price,
      using only information available at D-1 08:00 UTC,
-  3. run the four strategies in ``forecasting/strategies.py`` (MID baseline,
-     MID forecast, imbalance forecast, imbalance perfect foresight),
+  3. run the four strategies in ``forecasting/strategies.py`` (day-ahead perfect,
+     day-ahead forecast, imbalance forecast, imbalance perfect foresight),
   4. upload all schedules (``strategy`` column) and a one-row daily KPI record to Gold.
 
 Re-running is a no-op once every day in the window is present (idempotent).
@@ -34,6 +34,7 @@ from bess_pipeline.forecasting.model import (
 )
 from bess_pipeline.forecasting.strategies import run_strategies
 from bess_pipeline.ingestion.elexon_client import ElexonClient
+from bess_pipeline.ingestion.neso_client import NesoClient
 from bess_pipeline.optimization.dispatch_optimizer import BESSDispatcher
 from bess_pipeline.transformations.storage import save_to_silver_parquet
 from bess_pipeline.transformations.temporal import standardize_system_prices
@@ -82,9 +83,11 @@ def run_daily_update(
     lake: AWSDataLakeManager | None = None,
     client: ElexonClient | None = None,
     dispatcher: BESSDispatcher | None = None,
+    neso: NesoClient | None = None,
 ) -> list[dict]:
     lake = lake or AWSDataLakeManager()
     client = client or ElexonClient()
+    neso = neso or NesoClient()
     dispatcher = dispatcher or BESSDispatcher()
     usable = dispatcher.max_soc_mwh - dispatcher.min_soc_mwh
 
@@ -113,47 +116,50 @@ def run_daily_update(
         return []
     imb["interval_start_utc"] = pd.to_datetime(imb["interval_start_utc"], utc=True)
 
-    # 1b. MID prices and wind/demand forecasts (fetched live; N2EX is dropped inside fetch_mid)
+    # 1b. N2EX day-ahead prices (NESO) and wind/demand forecasts (fetched live)
     end_excl = fmt(end + timedelta(days=1))
-    mid = client.fetch_mid(history_start, end_excl)
+    da = neso.fetch_day_ahead()
     wind = client.fetch_wind_forecasts(fmt(datetime.strptime(history_start, "%Y-%m-%d") - timedelta(days=7)), end_excl)
     demand = client.fetch_demand_forecasts(fmt(datetime.strptime(history_start, "%Y-%m-%d") - timedelta(days=7)), end_excl)
-    history = imb.merge(mid[["interval_start_utc", "mid_price_gbp"]], on="interval_start_utc", how="left")
-    exog = build_exogenous(pd.DatetimeIndex(history["interval_start_utc"]), wind, demand)
+    history = imb.merge(da, on="interval_start_utc", how="left")
+    # day-ahead history can extend beyond the imbalance history (it has no settlement lag)
+    da_hist = da.assign(system_price_gbp=float("nan"))
+    exog = build_exogenous(pd.DatetimeIndex(sorted(set(history["interval_start_utc"]) | set(da["interval_start_utc"]))), wind, demand)
 
-    mid_kw = dict(target_col="mid_price_gbp", min_lag_days=2, name="gbm_mid")  # MID is published ex-post
+    # D-1 auction results are public at the D-1 08:00 UTC decision time, so a 1-day lag is legitimate here
+    da_kw = dict(target_col="da_price_gbp", min_lag_days=1, name="gbm_day_ahead")
     imb_kw = dict(target_col="system_price_gbp", min_lag_days=2, name="gbm_imbalance")
 
-    results, f_mid, f_imb, fitted_at = [], None, None, None
+    results, f_da, f_imb, fitted_at = [], None, None, None
     for date in missing:
         ts = day_timestamps(date)
         actual = history[history["interval_start_utc"].isin(ts)]
-        if actual.empty or actual["mid_price_gbp"].isna().any():
-            logger.warning("Missing imbalance or MID prices for %s; skipping.", date)
+        if actual.empty or actual["da_price_gbp"].isna().any():
+            logger.warning("Missing imbalance or day-ahead prices for %s; skipping.", date)
             continue
 
-        if f_mid is None or (ts[0] - fitted_at).days >= RETRAIN_EVERY_DAYS:
-            f_mid = _fit_forecaster(history, ts[0], exog, **mid_kw)
+        if f_da is None or (ts[0] - fitted_at).days >= RETRAIN_EVERY_DAYS:
+            f_da = _fit_forecaster(da_hist, ts[0], exog, **da_kw)
             f_imb = _fit_forecaster(history, ts[0], exog, **imb_kw)
             fitted_at = ts[0]
 
-        fc_mid = f_mid.predict(date, history, exog)
+        fc_da = f_da.predict(date, da_hist, exog)
         fc_imb = f_imb.predict(date, history, exog)
-        strat = run_strategies(dispatcher, actual, usable, mid_forecast=fc_mid, imbalance_forecast=fc_imb)
-        if "mid_forecast" not in strat:
+        strat = run_strategies(dispatcher, actual, usable, da_forecast=fc_da, imbalance_forecast=fc_imb)
+        if "da_forecast" not in strat:
             logger.error("Solver failed for %s; skipping.", date)
             continue
 
-        kpi, _ = strat["mid_forecast"]  # headline strategy
+        kpi, _ = strat["da_forecast"]  # headline strategy
         mae = lambda col, fc: round(float((actual.set_index("interval_start_utc")[col]
                                            - fc.set_index("interval_start_utc")["price_forecast"]).abs().mean()), 3)
         row = {
             "settlementDate": date,
-            "forecaster_mid": f_mid.name,
+            "forecaster_da": f_da.name,
             "forecaster_imbalance": f_imb.name,
-            "mid_forecast_mae_gbp_per_mwh": mae("mid_price_gbp", fc_mid),
+            "da_forecast_mae_gbp_per_mwh": mae("da_price_gbp", fc_da),
             "imbalance_forecast_mae_gbp_per_mwh": mae("system_price_gbp", fc_imb),
-            "profit_gbp": kpi.net_profit_gbp,  # headline = mid_forecast
+            "profit_gbp": kpi.net_profit_gbp,  # headline = da_forecast
             "gross_revenue_gbp": kpi.gross_revenue_gbp,
             "charging_cost_gbp": kpi.charging_cost_gbp,
             "export_mwh": kpi.export_throughput_mwh,
@@ -168,9 +174,9 @@ def run_daily_update(
         lake.upload_gold_schedule_to_s3(schedule, settlement_date=date)
         lake.upload_daily_kpis_to_s3(row, date)  # written last: marks the day complete
         results.append(row)
-        logger.info("%s done: mid_forecast £%.2f | mid_baseline £%s | imbalance_forecast £%s | MID MAE %.1f",
-                    date, row["profit_gbp"], row.get("profit_mid_baseline_gbp"),
-                    row.get("profit_imbalance_forecast_gbp"), row["mid_forecast_mae_gbp_per_mwh"])
+        logger.info("%s done: da_forecast £%.2f | da_perfect £%s | imbalance_forecast £%s | DA MAE %.1f",
+                    date, row["profit_gbp"], row.get("profit_da_perfect_gbp"),
+                    row.get("profit_imbalance_forecast_gbp"), row["da_forecast_mae_gbp_per_mwh"])
     return results
 
 

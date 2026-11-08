@@ -1,18 +1,17 @@
 """
-Dispatch strategies compared in the pipeline and dashboard.
+Dispatch strategies compared in the daily job and the live dashboard.
 
-Settlement basis matters, so each strategy states it:
+Prices are the N2EX GB day-ahead auction (NESO) unless stated. The auction for D clears on D-1,
+so a plan made at D-1 08:00 UTC must be based on a FORECAST of it.
 
-* ``mid_baseline``       optimize on the published MID price, settle at MID
-                         (upper bound: MID prices known in advance; MID is a market index published
-                         as each period happens, not the day-ahead auction result).
-* ``mid_forecast``       optimize on OUR forecast of MID made at D-1 08:00 UTC,
-                         settle at the actual MID. Value of the model = how close
-                         this gets to ``mid_baseline``.
-* ``imbalance_forecast`` (experimental) optimize on a forecast of the imbalance
-                         price, settle at the actual imbalance price.
-* ``imbalance_perfect``  (experimental) optimize on actual imbalance prices; an
-                         unattainable upper bound for the imbalance market.
+* ``da_perfect``         optimize on the actual day-ahead prices, settle at them (upper bound).
+* ``da_forecast``        optimize on OUR forecast made at D-1 08:00 UTC, settle at the actual
+                         day-ahead price. Headline strategy.
+* ``imbalance_forecast`` (experimental) optimize on a forecast of the imbalance price, settle at it.
+* ``imbalance_perfect``  (experimental) actual imbalance prices; unattainable upper bound.
+
+These per-day strategies reset the battery daily and ignore costs. The cost-aware, SOC-carrying
+strategy lives in ``rolling.py`` and the Max Revenue page.
 """
 
 import pandas as pd
@@ -31,19 +30,19 @@ def run_strategies(
     dispatcher: BESSDispatcher,
     day: pd.DataFrame,
     usable_capacity_mwh: float,
-    mid_forecast: pd.DataFrame | None = None,
+    da_forecast: pd.DataFrame | None = None,
     imbalance_forecast: pd.DataFrame | None = None,
 ) -> dict:
     """
     Args:
-        day: one UK day with ['interval_start_utc', 'system_price_gbp', 'mid_price_gbp'].
+        day: one UK day with ['interval_start_utc', 'system_price_gbp', 'da_price_gbp'].
     Returns {strategy_name: (BESSFinancialMetrics, schedule_df)} for strategies that solved.
     """
     out: dict = {}
-    mid_day = _with_settlement(day, "mid_price_gbp")
-    out["mid_baseline"] = settle_day(dispatcher, mid_day, None, usable_capacity_mwh)
-    if mid_forecast is not None:
-        out["mid_forecast"] = settle_day(dispatcher, mid_day, mid_forecast, usable_capacity_mwh)
+    da_day = _with_settlement(day, "da_price_gbp")
+    out["da_perfect"] = settle_day(dispatcher, da_day, None, usable_capacity_mwh)
+    if da_forecast is not None:
+        out["da_forecast"] = settle_day(dispatcher, da_day, da_forecast, usable_capacity_mwh)
     out["imbalance_perfect"] = settle_day(dispatcher, day, None, usable_capacity_mwh)
     if imbalance_forecast is not None:
         out["imbalance_forecast"] = settle_day(dispatcher, day, imbalance_forecast, usable_capacity_mwh)

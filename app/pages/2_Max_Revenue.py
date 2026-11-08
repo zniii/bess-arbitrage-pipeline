@@ -1,5 +1,5 @@
 """
-Maximum revenue from the MID forecast, net of costs: tomorrow's plan, revenue history, and
+Maximum revenue from the day-ahead price forecast, net of costs: tomorrow's plan, revenue history, and
 how the achievable result compares with the theoretical maximum.
 
 Reads the pre-computed files in ``app/data/`` written by ``scripts/run_backtest_report.py``.
@@ -11,8 +11,8 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 import plotly.graph_objects as go
-from plotly.subplots import make_subplots
 import streamlit as st
+from plotly.subplots import make_subplots
 
 DATA = Path(__file__).resolve().parent.parent / "data"
 BLUE, BLACK, GREEN, RED, PURPLE, GREY, AMBER = "#3b82f6", "#0f172a", "#10b981", "#ef4444", "#8b5cf6", "#94a3b8", "#f59e0b"
@@ -41,9 +41,9 @@ plan["local"] = plan["interval_start_utc"].dt.tz_convert("Europe/London").dt.tz_
 known = roll[roll["actual_known"]].copy()
 last_day = known["date"].max()
 
-st.title("💷 Highest revenue from MID forecasting, net of costs")
-st.caption("MID = Elexon Market Index Data (APX), a wholesale price index published as each half-hour happens. "
-           "Plans are made at D-1 08:00 UTC from a forecast and valued at the actual MID afterwards.")
+st.title("💷 Highest revenue from day-ahead price forecasting, net of costs")
+st.caption("Price = N2EX GB day-ahead auction (NESO data, hourly). The auction for tomorrow clears at ~09:20 UK today, so plans are "
+           "made at 08:00 UTC from a forecast and valued afterwards at the actual auction price.")
 
 share = st.sidebar.slider("Optimiser / route-to-market revenue share (%)", 0, 30, 0,
                           help="Applied to positive net profit when reporting. Does not change the dispatch.") / 100
@@ -60,7 +60,7 @@ def after_share(x: float) -> float:
 tab_plan, tab_hist, tab_max = st.tabs(["Forecast & plan", "Revenue history (1 / 7 / 30 days)", "Maximum vs achievable"])
 
 # =============================================================================
-# Tab 1: MID forecast and the arbitrage plan built on it
+# Tab 1: day-ahead price forecast and the arbitrage plan built on it
 # =============================================================================
 with tab_plan:
     nd = summ.get("next_day")
@@ -72,11 +72,11 @@ with tab_plan:
     is_known = bool(day["actual_known"].iloc[0])
 
     fig = make_subplots(rows=3, cols=1, shared_xaxes=True, vertical_spacing=0.07, row_heights=[0.4, 0.3, 0.3],
-                        subplot_titles=("MID price: forecast vs actual (£/MWh)",
+                        subplot_titles=("Day-ahead price: forecast vs actual (£/MWh)",
                                         "Battery plan: discharge (+) / charge (-) MW", "State of energy (MWh)"))
-    fig.add_scatter(x=day["local"], y=day["mid_model"], name="MID forecast", line=dict(color=BLUE, width=3), row=1, col=1)
+    fig.add_scatter(x=day["local"], y=day["da_model"], name="Day-ahead forecast", line=dict(color=BLUE, width=3), row=1, col=1)
     if is_known:
-        fig.add_scatter(x=day["local"], y=day["mid_actual"], name="Actual MID", line=dict(color=BLACK, width=2), row=1, col=1)
+        fig.add_scatter(x=day["local"], y=day["da_actual"], name="Actual auction price", line=dict(color=BLACK, width=2), row=1, col=1)
     fig.add_bar(x=day["local"], y=day["discharge_mw"], name="Discharge (sell)", marker_color=GREEN, row=2, col=1)
     fig.add_bar(x=day["local"], y=-day["charge_mw"], name="Charge (buy)", marker_color=RED, row=2, col=1)
     fig.add_scatter(x=day["local"], y=day["soe_mwh"], name="State of energy", line=dict(color=PURPLE, width=2), row=3, col=1)
@@ -93,7 +93,7 @@ with tab_plan:
         out = []
         for _, g in day[on].groupby(grp[on]):
             end = g["local"].iloc[-1] + pd.Timedelta(minutes=30)
-            out.append(f"{g['local'].iloc[0]:%H:%M}–{end:%H:%M} (avg forecast £{g['mid_model'].mean():.0f}/MWh, "
+            out.append(f"{g['local'].iloc[0]:%H:%M}–{end:%H:%M} (avg forecast £{g['da_model'].mean():.0f}/MWh, "
                        f"{(g[col] * 0.5).sum():.1f} MWh)")
         return out or ["none"]
     c1, c2 = st.columns(2)
@@ -115,7 +115,7 @@ with tab_plan:
                   help=f"Expected × {ratio:.2f}: over the backtest, realised profit was {ratio:.0%} of expected.")
     st.info(
         f"**How reliable is 'expected profit'?** Over {len(known)} settled days the plans' expected net profit "
-        f"(£{summ['calibration']['expected_net_gbp']:,.0f}) was **{1 / ratio - 1:.0%} higher** than what was realised at actual MID "
+        f"(£{summ['calibration']['expected_net_gbp']:,.0f}) was **{1 / ratio - 1:.0%} higher** than what was realised at the actual auction price "
         f"(£{summ['calibration']['realised_net_gbp']:,.0f}). The forecast is smoother than reality and the plan is picked to look best on it, so treat "
         "expected profit as an optimistic estimate and the calibrated figure as the more realistic one."
     )
@@ -134,15 +134,15 @@ with tab_hist:
     oth = win["trading_fees_gbp"].sum() + win["degradation_gbp"].sum()
     net = win["net_profit_gbp"].sum()
     h1, h2, h3, h4 = st.columns(4)
-    h1.metric("Revenue generated (gross)", f"£{rev:,.0f}", help="Energy sold at actual MID.")
+    h1.metric("Revenue generated (gross)", f"£{rev:,.0f}", help="Energy sold at the actual day-ahead auction price.")
     h2.metric("Charging cost", f"£{chg:,.0f}")
     h3.metric("Degradation + fees", f"£{oth:,.0f}")
     h4.metric("Net profit", f"£{after_share(net):,.0f}", f"{(1 - share) * 100:.0f}% kept after revenue share" if share else None, delta_color="off")
 
     if n == 1:
         d1 = plan[(plan["date"] == last_day.strftime("%Y-%m-%d"))].copy()
-        d1["revenue"] = d1["discharge_mw"] * d1["mid_actual"] * 0.5
-        d1["cost"] = d1["charge_mw"] * d1["mid_actual"] * 0.5
+        d1["revenue"] = d1["discharge_mw"] * d1["da_actual"] * 0.5
+        d1["cost"] = d1["charge_mw"] * d1["da_actual"] * 0.5
         d1["other"] = (A["degradation_gbp_per_mwh_discharged"] * d1["discharge_mw"] * 0.5
                        + A["trading_fee_gbp_per_mwh"] * (d1["discharge_mw"] + d1["charge_mw"]) * 0.5)
         d1["net"] = d1["revenue"] - d1["cost"] - d1["other"]
@@ -168,7 +168,7 @@ with tab_hist:
         fig = go.Figure(go.Bar(x=win["date"], y=win["net_profit_gbp"], marker_color=[GREEN if v >= 0 else RED for v in win["net_profit_gbp"]]))
         fig.update_layout(height=260, title="Daily net profit (£)", margin=dict(l=10, r=10, t=40, b=10))
         st.plotly_chart(fig, use_container_width=True)
-    st.caption(f"Strategy: MID forecast model, degradation £{A['degradation_gbp_per_mwh_discharged']:.0f}/MWh, fee "
+    st.caption(f"Strategy: day-ahead forecast model, degradation £{A['degradation_gbp_per_mwh_discharged']:.0f}/MWh, fee "
                f"£{A['trading_fee_gbp_per_mwh']:.2f}/MWh, state of charge carried across days. Network/levy charges not modelled.")
 
 # =============================================================================
@@ -186,7 +186,7 @@ with tab_max:
               f"{oos['achievable_after_costs'] / oos['perfect_after_costs']:.0%} of max, last {oos['days']} days", delta_color="off")
 
     wf = go.Figure(go.Waterfall(
-        x=["Perfect MID, no costs,\ndaily reset", "SOC carried\nacross days", "Degradation, fees,\nend-of-day reserve",
+        x=["Perfect foresight, no\ncosts, daily reset", "SOC carried\nacross days", "Degradation, fees,\nend-of-day reserve",
            "Forecast error", "Achievable\n(after costs)"],
         measure=["absolute", "relative", "relative", "relative", "total"],
         y=[ub0, ub1 - ub0, ub2 - ub1, ach - ub2, ach],
@@ -199,7 +199,7 @@ with tab_max:
     st.markdown(
         f"- **Biggest loss is forecast error** (£{ub2 - ach:,.0f}), not costs (£{ub1 - ub2:,.0f}).\n"
         f"- **Carrying state of charge across days adds only £{ub1 - ub0:,.0f}** ({(ub1 - ub0) / ub0:.1%}) even with perfect knowledge; "
-        f"under forecast uncertainty the tuned value of leftover energy was **£{A['terminal_value_gbp_per_mwh']:.0f}/MWh**, i.e. holding energy overnight did not pay.\n"
+        f"under forecast uncertainty the value placed on energy left in the battery overnight was tuned to **£{A['terminal_value_gbp_per_mwh']:.0f}/MWh**.\n"
         f"- The terminal value was tuned on the first {A['tuned_on_days']} days only; the last {oos['days']} days are out of sample."
     )
 
@@ -230,7 +230,7 @@ with tab_max:
             f"""
 - **Included:** degradation (£{A['degradation_gbp_per_mwh_discharged']:.0f}/MWh discharged, a *placeholder*), trading fee (£{A['trading_fee_gbp_per_mwh']:.2f}/MWh, default zero because no public figure exists: route-to-market fees are contractual), 85% round-trip efficiency, 10–90% SOC window, {A['end_of_day_reserve_mwh']:.0f} MWh end-of-day reserve, SOC carried across days.
 - **Not included:** network and levy charges (unknown for your site, likely the biggest missing cost), optimiser revenue share unless you set the sidebar slider, taxes, other revenue streams (frequency response, capacity market, Balancing Mechanism).
-- **MID is an index, not a tradable price:** the model assumes the battery can buy and sell at the MID index price with no volume limits or price impact.
+- **Day-ahead price, idealised trading:** the model assumes the battery can buy and sell its whole schedule at the hourly auction price, with no fees (unless set), volume limits or price impact, and that hours can be linked through the battery's state of charge. Real orders are submitted before the price is known; this is an upper-level estimate, not a trading result.
 - **One season (autumn 2026), untuned model, single run.** The £8/MWh degradation figure is a placeholder and may be low or high for your battery.
 """
         )

@@ -31,28 +31,26 @@ Subject to:
   $$\text{SOE}_t = \text{SOE}_{t-1} + \left( P_t^{\text{ch}} \cdot \sqrt{\eta} - \frac{P_t^{\text{dis}}}{\sqrt{\eta}} \right) \cdot \Delta t$$
 * **Asset Degradation Penalty ($C_{\text{deg}}$):** optional throughput cost (`degradation_cost_gbp_per_mwh` on `BESSDispatcher`, default 0) that prevents cycling when spreads are too narrow to justify battery wear.
 
-## 🔮 Strategies and forecasting (daily update)
+## 🔮 Price, forecasting and strategies
 
-A real operator cannot optimize against prices that have not happened yet. The daily job runs four strategies per settled day and stores all of them (`strategy` column in `gold/dispatch_schedules/`, one row per day in `gold/daily_kpis/`):
+**Main price: the N2EX GB day-ahead auction** (hourly, from NESO open data, `ingestion/neso_client.py`). The auction for day D clears around 09:20 UK on D-1, so a plan made at **D-1 08:00 UTC** must rely on a *forecast*; yesterday's auction prices are already public. (Elexon MID, an index published as each half-hour happens, was used in earlier versions; it is not tradable in advance and has been replaced.)
+
+Forecasting (`forecasting/`): gradient-boosted regressor (scikit-learn) on calendar features, day-ahead price lags (>= 1 day), rolling statistics, and Elexon **wind (WINDFOR)** and **national demand (NDFD)** forecasts. Only forecast publications made before the cutoff are used (no-lookahead tests). A seasonal-naive forecaster (same hour last week) is the benchmark. Retrained every 14 days.
+
+Strategies run by the daily job (`strategy` column in `gold/dispatch_schedules/`, one row per day in `gold/daily_kpis/`):
 
 | Strategy | Optimizes on | Settled at | Role |
 |---|---|---|---|
-| `mid_baseline` | actual MID prices, known in advance | MID | **Upper bound** (name kept in the data): profit if MID were perfectly known |
-| `mid_forecast` | **our own forecast of MID**, made at D-1 08:00 UTC | actual MID | **Headline model**: how much of the upper bound a forecast can capture |
-| `imbalance_forecast` | forecast of the imbalance (system) price | imbalance price | Experimental, toggled in the dashboard |
-| `imbalance_perfect` | actual imbalance prices | imbalance price | Experimental unattainable upper bound |
+| `da_forecast` | **our forecast** of the day-ahead price | actual day-ahead price | **Headline** |
+| `da_perfect` | actual day-ahead prices | actual day-ahead price | Upper bound |
+| `imbalance_forecast` | forecast imbalance (system) price | imbalance price | Experimental (dashboard toggle) |
+| `imbalance_perfect` | actual imbalance prices | imbalance price | Experimental upper bound |
 
-Forecasting (`forecasting/`): gradient-boosted regressor (scikit-learn) on calendar features, lagged prices, and Elexon **wind (WINDFOR)** and **national demand (NDFD)** day-ahead forecasts. Everything respects the decision time D-1 08:00 UTC: price lags are >= 2 days for both MID and the imbalance price (MID is published as each half-hour happens, so most of D-1 is not yet known), and only forecast publications made before the cutoff are used (covered by no-lookahead tests). A seasonal-naive forecaster (same half-hour last week) is the benchmark. The model is retrained weekly.
+These daily-job strategies reset the battery to 10% SOC each day and ignore costs. The **Max Revenue** page uses the cost-aware strategy from `forecasting/rolling.py`: state of charge carried across days, degradation (default £8/MWh discharged, a placeholder), trading fee (default £0), an end-of-day reserve (default 4 MWh) and a terminal value for stored energy (tuned on the first 40% of days, judged on the rest). Network and levy charges are not modelled. `scripts/run_backtest_report.py` produces everything those pages read (`app/data/`): the bridge from the theoretical maximum to the achievable result, a degradation x fee sensitivity grid, tomorrow's plan with expected profit, and 1/7/30-day revenue history.
 
-**MID** (Elexon Market Index Data, APX provider) is a wholesale price *index* published as each period happens. It is not the day-ahead auction result, and it is not directly tradable: every MID strategy assumes trading at the index price.
+> No free hosted API for GB price *forecasts* was found, so the model is built in-repo. The NESO Carbon Intensity forecast was considered as a further feature but is not wired in. Trading is idealised: no volume limits or price impact, and real orders are submitted before the price is known.
 
-> No free hosted API for GB price forecasts was found, so the model is built in-repo. The NESO Carbon Intensity forecast was considered as a further feature but is not wired in.
-> MID is not the same price as the imbalance price. The legacy strategies above ignore costs and reset the battery to 10% SOC every day; the **Max Revenue** page adds the cost-aware strategy below.
-
-### Cost-aware strategy (Max Revenue page)
-`scripts/run_backtest_report.py` also runs a strategy that carries state of charge across days and includes degradation (default £8/MWh discharged, a placeholder), trading fees (default £0), an end-of-day reserve (default 4 MWh) and a terminal value for stored energy (tuned on the first 40% of days, judged on the rest). It reports the theoretical maximum (perfect MID, after costs), the achievable forecast-based result, a bridge between them, a degradation x fee sensitivity grid, tomorrow's planned schedule with expected profit, and 1/7/30-day revenue history. Network and levy charges are not modelled.
-
-The dashboard shows 1-day, 7-day and 30-day views ending at the latest settled day. The imbalance models are hidden unless enabled with the sidebar checkbox.
+The live dashboard (`app/dashboard.py`) shows 1-day, 7-day and 30-day views of the daily-job results from S3/MinIO; the imbalance models are hidden unless enabled with the sidebar checkbox.
 
 ---
 
@@ -77,11 +75,11 @@ python -m bess_pipeline.orchestration.daily_update --window-days 30
 # Original perfect-foresight backtest for specific dates
 python -m bess_pipeline.orchestration.pipeline_runner --start-date 2026-08-01 --end-date 2026-08-03
 
-# Dashboard (live Gold results from S3/MinIO) and the offline "Findings" page (sidebar)
+# Dashboard (live Gold results from S3/MinIO); the Findings and Max Revenue pages (sidebar) work offline
 streamlit run app/dashboard.py
 
 # Regenerate the backtest behind the Findings page (needs internet access to Elexon)
-python scripts/run_backtest_report.py --start 2026-08-01 --end 2026-11-04 --history-start 2026-01-01
+python scripts/run_backtest_report.py --start 2026-08-01 --end 2026-11-08
 
 # Tests (test_live_small_window_fetch needs internet access to Elexon)
 pytest
