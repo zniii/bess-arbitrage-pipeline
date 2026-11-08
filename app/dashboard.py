@@ -5,7 +5,7 @@ Interactive analytics interface querying Gold Layer Parquet schedules.
 
 import os
 
-import duckdb
+import gold_data
 import pandas as pd
 import plotly.graph_objects as go
 import streamlit as st
@@ -21,62 +21,49 @@ st.set_page_config(
 )
 
 
-def _connect():
-    """DuckDB connection to S3 (AWS, or MinIO/LocalStack via AWS_ENDPOINT_URL)."""
-    con = duckdb.connect()
-    con.execute("INSTALL httpfs; LOAD httpfs;")
-    con.execute("SET s3_region=?", [os.getenv("AWS_REGION", "eu-west-2")])
-    con.execute("SET s3_access_key_id=?", [os.getenv("AWS_ACCESS_KEY_ID", "")])
-    con.execute("SET s3_secret_access_key=?", [os.getenv("AWS_SECRET_ACCESS_KEY", "")])
-    endpoint = os.getenv("AWS_ENDPOINT_URL")
-    if endpoint:
-        host = endpoint.split("://", 1)[-1].rstrip("/")
-        con.execute("SET s3_endpoint=?", [host])
-        con.execute("SET s3_url_style='path'")
-        con.execute("SET s3_use_ssl=?", [endpoint.startswith("https")])
-    return con
-
-
-def _bucket() -> str:
-    return os.getenv("AWS_S3_BUCKET") or os.getenv("S3_BUCKET_NAME", "")
-
-
 @st.cache_data(ttl=300)
-def load_daily_kpis() -> pd.DataFrame:
-    """One row per settled day: forecast-based vs perfect-foresight profit, EFC, MAE."""
-    return _connect().execute(f"""
-        SELECT * FROM read_parquet('s3://{_bucket()}/gold/daily_kpis/**/*.parquet', hive_partitioning = true)
-        ORDER BY settlementDate
-    """).df()
-
-
-@st.cache_data(ttl=300)
-def load_gold_schedules() -> pd.DataFrame:
-    """Half-hourly dispatch schedules (with the forecast the optimizer used)."""
-    return _connect().execute(f"""
-        SELECT settlementDate, strategy, interval_start_utc, system_price_gbp, da_price_gbp,
-               settlement_price_gbp, price_forecast, optimal_charge_mw, optimal_discharge_mw, net_dispatch_mw, state_of_energy_mwh
-        FROM read_parquet('s3://{_bucket()}/gold/dispatch_schedules/**/*.parquet', hive_partitioning = true)
-        ORDER BY interval_start_utc ASC
-    """).df()
+def load_all(base: str, local: bool):
+    """(schedules, kpis, kpis_are_derived). Missing results come back empty instead of raising."""
+    con = gold_data.connect(local=local)
+    schedules = gold_data.load_schedules(con, base)
+    kpis = gold_data.load_kpis(con, base)
+    derived = False
+    if kpis.empty and not schedules.empty:
+        kpis, derived = gold_data.derive_kpis(schedules), True
+    return schedules, kpis, derived
 
 
 # -----------------------------------------------------------------------------
 # Header & Data Loading
 # -----------------------------------------------------------------------------
 st.title("⚡ BESS Arbitrage & Dispatch Dashboard")
-st.caption("Headline: dispatch optimized on our N2EX day-ahead price forecast and settled at the actual day-ahead auction price (per-day view: no costs, battery reset daily; see the Max Revenue page for the cost-aware view)")
+st.caption("Live results from the daily job in S3/MinIO. Headline: dispatch optimized on our N2EX day-ahead price forecast and "
+           "settled at the actual day-ahead auction price (per-day view: no costs, battery reset daily; see the Max Revenue page "
+           "for the cost-aware view).")
 
+BASE, LOCAL = gold_data.base_location()
 try:
-    df_all = load_gold_schedules()
-    df_kpi = load_daily_kpis()
+    df_all, df_kpi, kpis_derived = load_all(BASE, LOCAL)
 except Exception as err:
-    st.error(f"Failed to load Gold data from S3: {err}")
+    st.error(f"Could not read Gold data from {BASE}: {err}")
+    st.info("Check the AWS settings (AWS_S3_BUCKET or S3_BUCKET_NAME, keys, AWS_REGION; AWS_ENDPOINT_URL for MinIO). "
+            "The Findings and Max Revenue pages in the sidebar do not need S3.")
     st.stop()
 
-if df_all.empty or df_kpi.empty:
-    st.warning("No dispatch results found in the Gold data lake. Run the daily update first.")
+if df_all.empty:
+    st.warning("No dispatch schedules found under `gold/dispatch_schedules/`. Run the daily update first: "
+               "`python -m bess_pipeline.orchestration.daily_update --window-days 30`.")
     st.stop()
+
+has_new = "da_forecast" in set(df_all["strategy"])
+if kpis_derived:
+    st.info("`gold/daily_kpis/` does not exist yet, so daily figures below are **derived from the stored schedules** "
+            + ("(legacy schedules only: optimised on actual imbalance prices with perfect foresight, so these are upper-bound results). "
+               if not has_new else "")
+            + "Run `python -m bess_pipeline.orchestration.daily_update --window-days 30` (needs AWS credentials and internet access "
+              "to Elexon and NESO) to add forecast-based results, forecast errors and the KPI table.")
+elif (df_all["strategy"] == gold_data.LEGACY_STRATEGY).any():
+    st.caption("Older partitions in the bucket use the legacy schedule format and are shown as `legacy_imbalance_perfect`.")
 
 # -----------------------------------------------------------------------------
 # Period summary (1 day / 7 days / 1 month, ending at the latest settled day)
@@ -93,27 +80,36 @@ STRATEGIES = {  # column -> (label, colour, experimental?)
     "profit_da_forecast_gbp": ("Day-ahead forecast model (ours)", "#10b981", False),
     "profit_imbalance_forecast_gbp": ("Imbalance forecast model", "#8b5cf6", True),
     "profit_imbalance_perfect_gbp": ("Imbalance perfect foresight (upper bound)", "#f59e0b", True),
+    f"profit_{gold_data.LEGACY_STRATEGY}_gbp": ("Legacy (actual imbalance prices, perfect foresight)", "#0ea5e9", False),
 }
 active = {c: v for c, v in STRATEGIES.items() if (show_imb or not v[2]) and c in window.columns}
 
 st.subheader(f"{period_label} ending {latest:%Y-%m-%d}  ({len(window)} day(s) of data)")
-p_profit = window["profit_da_forecast_gbp"].sum()
-p_base = window["profit_da_perfect_gbp"].sum()
-c1, c2, c3, c4, c5 = st.columns(5)
-c1.metric("Net Profit (day-ahead forecast model)", f"£{p_profit:,.2f}")
-c2.metric("Day-ahead Perfect Foresight", f"£{p_base:,.2f}")
-c3.metric("Baseline Captured", f"{(p_profit / p_base * 100) if p_base else 0:.0f}%")
-c4.metric("Cycles (EFC)", f"{window['equivalent_full_cycles'].sum():.2f}")
-c5.metric("Forecast MAE", f"£{window['da_forecast_mae_gbp_per_mwh'].mean():.2f}/MWh")
-if show_imb:
-    st.caption(
-        f"Imbalance forecast model: £{window['profit_imbalance_forecast_gbp'].sum():,.2f} "
-        f"(MAE £{window['imbalance_forecast_mae_gbp_per_mwh'].mean():.2f}/MWh) vs perfect-foresight "
-        f"upper bound £{window['profit_imbalance_perfect_gbp'].sum():,.2f}. "
-        "Different settlement price from the day-ahead strategies: not directly comparable."
-    )
+if "profit_da_forecast_gbp" in window.columns:
+    p_profit = window["profit_da_forecast_gbp"].sum()
+    p_base = window["profit_da_perfect_gbp"].sum() if "profit_da_perfect_gbp" in window.columns else float("nan")
+    c1, c2, c3, c4, c5 = st.columns(5)
+    c1.metric("Net Profit (day-ahead forecast model)", f"£{p_profit:,.2f}")
+    c2.metric("Day-ahead Perfect Foresight", f"£{p_base:,.2f}")
+    c3.metric("Share of Upper Bound", f"{(p_profit / p_base * 100) if p_base else 0:.0f}%")
+    c4.metric("Cycles (EFC)", f"{window['equivalent_full_cycles'].sum():.2f}")
+    if "da_forecast_mae_gbp_per_mwh" in window.columns:
+        c5.metric("Forecast MAE", f"£{window['da_forecast_mae_gbp_per_mwh'].mean():.2f}/MWh")
+    if show_imb and "profit_imbalance_forecast_gbp" in window.columns:
+        st.caption(
+            f"Imbalance forecast model: £{window['profit_imbalance_forecast_gbp'].sum():,.2f} "
+            f"(MAE £{window['imbalance_forecast_mae_gbp_per_mwh'].mean():.2f}/MWh) vs perfect-foresight "
+            f"upper bound £{window['profit_imbalance_perfect_gbp'].sum():,.2f}. "
+            "Different settlement price from the day-ahead strategies: not directly comparable."
+        )
+else:
+    legacy_col = f"profit_{gold_data.LEGACY_STRATEGY}_gbp"
+    c1, c2, c3 = st.columns(3)
+    c1.metric("Net Profit (legacy schedules)", f"£{window[legacy_col].sum():,.2f}")
+    c2.metric("Cycles (EFC)", f"{window['equivalent_full_cycles'].sum():.2f}")
+    c3.metric("Days with results", f"{len(window)}")
 
-if len(window) > 1:
+if len(window) > 1 and active:
     bar = go.Figure()
     for col, (label, colour, _) in active.items():
         bar.add_bar(x=window["settlementDate"], y=window[col], name=label, marker_color=colour)
@@ -129,8 +125,9 @@ st.subheader("Intraday detail")
 available_dates = sorted(df_all["settlementDate"].unique().tolist())
 selected_date = st.sidebar.selectbox("Select Settlement Date", available_dates, index=len(available_dates) - 1)
 
-strategy_options = ["da_forecast", "da_perfect"] + (["imbalance_forecast", "imbalance_perfect"] if show_imb else [])
-strategy = st.sidebar.selectbox("Strategy (intraday detail)", strategy_options)
+strategy_options = [x for x in df_all.loc[df_all["settlementDate"] == selected_date, "strategy"].unique()
+                    if show_imb or not x.startswith("imbalance_")]
+strategy = st.sidebar.selectbox("Strategy (intraday detail)", strategy_options or [gold_data.LEGACY_STRATEGY])
 df_day = df_all[(df_all["settlementDate"] == selected_date) & (df_all["strategy"] == strategy)].copy()
 df_day["system_price_gbp"] = df_day["settlement_price_gbp"]  # price this strategy is settled at
 df_day["interval_start_utc"] = pd.to_datetime(df_day["interval_start_utc"])
@@ -166,7 +163,7 @@ fig = make_subplots(
     shared_xaxes=True,
     vertical_spacing=0.08,
     subplot_titles=(
-        "Elexon System Price (£/MWh)",
+        "Settlement price (£/MWh)",
         "Optimal Dispatch: Charge (-) vs. Discharge (+) [MW]",
         "Battery State of Energy (MWh)",
     ),
@@ -184,17 +181,18 @@ fig.add_trace(
     row=1,
     col=1,
 )
-fig.add_trace(
-    go.Scatter(
-        x=df_day["interval_start_utc"],
-        y=df_day["price_forecast"],
-        mode="lines",
-        line=dict(color="#8b5cf6", width=2, dash="dot"),
-        name="Day-ahead Forecast (£/MWh)",
-    ),
-    row=1,
-    col=1,
-)
+if df_day["price_forecast"].notna().any():
+    fig.add_trace(
+        go.Scatter(
+            x=df_day["interval_start_utc"],
+            y=df_day["price_forecast"],
+            mode="lines",
+            line=dict(color="#8b5cf6", width=2, dash="dot"),
+            name="Forecast (£/MWh)",
+        ),
+        row=1,
+        col=1,
+    )
 
 # 2. MW Dispatch
 fig.add_trace(

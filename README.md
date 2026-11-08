@@ -52,6 +52,8 @@ These daily-job strategies reset the battery to 10% SOC each day and ignore cost
 
 The live dashboard (`app/dashboard.py`) shows 1-day, 7-day and 30-day views of the daily-job results from S3/MinIO; the imbalance models are hidden unless enabled with the sidebar checkbox.
 
+**Older data in the bucket:** schedules written by the original `pipeline_runner` (no `strategy` column) are still read and shown as `legacy_imbalance_perfect`; until `gold/daily_kpis/` exists, daily figures are derived from the schedules and labelled as such. Running the daily update adds the forecast-based results and the KPI table. To try the dashboard on a local folder laid out like the bucket, set `BESS_LOCAL_DATA_DIR=/path/to/folder` (it needs `gold/dispatch_schedules/...` and optionally `gold/daily_kpis/...`).
+
 ---
 
 ## 🚀 Getting Started
