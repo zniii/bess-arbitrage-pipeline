@@ -1,5 +1,5 @@
 """
-Leak-free exogenous inputs (wind and demand forecasts) for day-ahead models.
+Leak-free exogenous inputs (wind and demand forecasts) for next-day price models.
 
 For delivery day D the decision is taken on D-1 at ``DECISION_HOUR_UTC`` (08:00 UTC,
 i.e. before the ~09:20 UK day-ahead auction deadline in both GMT and BST). Only

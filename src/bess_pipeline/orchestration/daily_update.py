@@ -4,8 +4,8 @@ Daily incremental update: bring Gold up to the most recent settled day.
 For every UK day in the trailing ``--window-days`` window (ending yesterday, the
 latest fully settled day) that has no Gold schedule + KPI row yet:
   1. ingest Bronze/Silver imbalance prices if missing (plus ``--history-days`` of
-     warm-up history), and fetch MID day-ahead prices plus wind/demand forecasts,
-  2. forecast day-ahead MID (our model) and, experimentally, the imbalance price,
+     warm-up history), and fetch MID index prices plus wind/demand forecasts,
+  2. forecast MID a day ahead (our model) and, experimentally, the imbalance price,
      using only information available at D-1 08:00 UTC,
   3. run the four strategies in ``forecasting/strategies.py`` (MID baseline,
      MID forecast, imbalance forecast, imbalance perfect foresight),
@@ -121,7 +121,7 @@ def run_daily_update(
     history = imb.merge(mid[["interval_start_utc", "mid_price_gbp"]], on="interval_start_utc", how="left")
     exog = build_exogenous(pd.DatetimeIndex(history["interval_start_utc"]), wind, demand)
 
-    mid_kw = dict(target_col="mid_price_gbp", min_lag_days=1, name="gbm_mid")
+    mid_kw = dict(target_col="mid_price_gbp", min_lag_days=2, name="gbm_mid")  # MID is published ex-post
     imb_kw = dict(target_col="system_price_gbp", min_lag_days=2, name="gbm_imbalance")
 
     results, f_mid, f_imb, fitted_at = [], None, None, None

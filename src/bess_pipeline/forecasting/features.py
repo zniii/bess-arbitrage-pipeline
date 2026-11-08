@@ -5,8 +5,9 @@ Information rule (strict):
     A forecast for delivery day D is produced on the morning of D-1, before the
     day-ahead auction closes. Imbalance (system) prices are only known after each
     settlement period, so prices are available up to the end of D-2 and every
-    price feature lags >= 2 days (``min_lag_days=2``). The day-ahead MID price of
-    D-1 was published on D-2, so for the MID target ``min_lag_days=1``. Exogenous
+    price feature lags >= 2 days (``min_lag_days=2``). The same holds for MID: it is a
+    market index that Elexon publishes as each period happens (NOT the day-ahead
+    auction result), so only part of D-1 exists at 08:00 UTC. Exogenous
     forecasts (wind, demand) must already be filtered to what was published before
     the cutoff (see ``exogenous.py``).
 

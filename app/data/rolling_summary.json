@@ -1,0 +1,58 @@
+{
+  "assumptions": {
+    "degradation_gbp_per_mwh_discharged": 8.0,
+    "trading_fee_gbp_per_mwh": 0.0,
+    "end_of_day_reserve_mwh": 4.0,
+    "network_levy_charges": "not modelled (unknown)",
+    "terminal_value_gbp_per_mwh": 0.0,
+    "terminal_value_tuning_grid": {
+      "0.0": 22360.84,
+      "25.0": 22360.84,
+      "50.0": 22360.84,
+      "75.0": 22360.84,
+      "100.0": 21454.24,
+      "125.0": 17064.44,
+      "150.0": 9773.87
+    },
+    "tuned_on_days": 39,
+    "evaluated_days": 99,
+    "revenue_share_applied": false
+  },
+  "bridge_gbp": {
+    "legacy_achievable_no_costs_daily_reset": 84684.15,
+    "perfect_no_costs_daily_reset": 148644.82,
+    "perfect_no_costs_soc_carry": 150732.15,
+    "perfect_after_costs_soc_carry": 132162.57,
+    "achievable_after_costs_soc_carry": 66087.93
+  },
+  "out_of_sample_gbp": {
+    "days": 60,
+    "perfect_after_costs": 88938.27,
+    "achievable_after_costs": 43727.09
+  },
+  "achievable_breakdown_gbp": {
+    "revenue_gbp": 343226.89,
+    "charging_cost_gbp": 261666.53,
+    "trading_fees_gbp": 0.0,
+    "degradation_gbp": 15472.43,
+    "net_profit_gbp": 66087.93
+  },
+  "calibration": {
+    "expected_net_gbp": 95542.21,
+    "realised_net_gbp": 66087.93,
+    "realised_over_expected": 0.692
+  },
+  "next_day": {
+    "date": "2026-11-09",
+    "actual_mid_published": false,
+    "expected_revenue_gbp": 4061.83,
+    "expected_charging_cost_gbp": 3191.97,
+    "expected_fees_gbp": 0.0,
+    "expected_degradation_gbp": 118.01,
+    "expected_net_gbp": 751.85,
+    "start_soc_mwh": 4.0,
+    "end_soc_mwh": 4.0,
+    "realised_net_gbp": null
+  },
+  "last_actual_day": "2026-11-07"
+}

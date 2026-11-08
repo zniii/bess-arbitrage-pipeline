@@ -37,15 +37,20 @@ A real operator cannot optimize against prices that have not happened yet. The d
 
 | Strategy | Optimizes on | Settled at | Role |
 |---|---|---|---|
-| `mid_baseline` | published day-ahead MID price (APX) | MID | **Baseline**: what day-ahead arbitrage earns once the auction result is known |
-| `mid_forecast` | **our own forecast of MID**, made before the ~09:20 auction | actual MID | **Headline model**: how much of the baseline a forecast can capture |
+| `mid_baseline` | actual MID prices, known in advance | MID | **Upper bound** (name kept in the data): profit if MID were perfectly known |
+| `mid_forecast` | **our own forecast of MID**, made at D-1 08:00 UTC | actual MID | **Headline model**: how much of the upper bound a forecast can capture |
 | `imbalance_forecast` | forecast of the imbalance (system) price | imbalance price | Experimental, toggled in the dashboard |
 | `imbalance_perfect` | actual imbalance prices | imbalance price | Experimental unattainable upper bound |
 
-Forecasting (`forecasting/`): gradient-boosted regressor (scikit-learn) on calendar features, lagged prices, and Elexon **wind (WINDFOR)** and **national demand (NDFD)** day-ahead forecasts. Everything respects the decision time D-1 08:00 UTC: price lags are >= 1 day for MID and >= 2 days for the imbalance price, and only forecast publications made before the cutoff are used (covered by no-lookahead tests). A seasonal-naive forecaster (same half-hour last week) is the benchmark. The model is retrained weekly.
+Forecasting (`forecasting/`): gradient-boosted regressor (scikit-learn) on calendar features, lagged prices, and Elexon **wind (WINDFOR)** and **national demand (NDFD)** day-ahead forecasts. Everything respects the decision time D-1 08:00 UTC: price lags are >= 2 days for both MID and the imbalance price (MID is published as each half-hour happens, so most of D-1 is not yet known), and only forecast publications made before the cutoff are used (covered by no-lookahead tests). A seasonal-naive forecaster (same half-hour last week) is the benchmark. The model is retrained weekly.
+
+**MID** (Elexon Market Index Data, APX provider) is a wholesale price *index* published as each period happens. It is not the day-ahead auction result, and it is not directly tradable: every MID strategy assumes trading at the index price.
 
 > No free hosted API for GB price forecasts was found, so the model is built in-repo. The NESO Carbon Intensity forecast was considered as a further feature but is not wired in.
-> MID is not the same price as the imbalance price; the MID strategies assume the battery can trade its schedule in the day-ahead auction at the MID price (no fees, no volume limits).
+> MID is not the same price as the imbalance price. The legacy strategies above ignore costs and reset the battery to 10% SOC every day; the **Max Revenue** page adds the cost-aware strategy below.
+
+### Cost-aware strategy (Max Revenue page)
+`scripts/run_backtest_report.py` also runs a strategy that carries state of charge across days and includes degradation (default £8/MWh discharged, a placeholder), trading fees (default £0), an end-of-day reserve (default 4 MWh) and a terminal value for stored energy (tuned on the first 40% of days, judged on the rest). It reports the theoretical maximum (perfect MID, after costs), the achievable forecast-based result, a bridge between them, a degradation x fee sensitivity grid, tomorrow's planned schedule with expected profit, and 1/7/30-day revenue history. Network and levy charges are not modelled.
 
 The dashboard shows 1-day, 7-day and 30-day views ending at the latest settled day. The imbalance models are hidden unless enabled with the sidebar checkbox.
 

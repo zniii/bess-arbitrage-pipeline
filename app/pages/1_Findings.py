@@ -38,7 +38,7 @@ base, model, naive = tot["profit_mid_baseline"], tot["profit_mid_forecast"], tot
 mae_model, mae_naive = daily["mae_mid_model"].mean(), daily["mae_mid_naive"].mean()
 b = meta["battery"]
 
-st.title("🔮 Can a forecast capture day-ahead battery arbitrage?")
+st.title("🔮 Can a forecast capture wholesale (MID) battery arbitrage?")
 st.markdown(
     f"A **{b['power_mw']:.0f} MW / {b['energy_mwh']:.0f} MWh** battery in Great Britain, back-tested over "
     f"**{meta['test_days']} days ({meta['test_start']} to {meta['test_end']})** on real Elexon data. "
@@ -47,14 +47,14 @@ st.markdown(
 )
 
 c1, c2, c3, c4 = st.columns(4)
-c1.metric("MID baseline profit", f"£{base:,.0f}", help="Day-ahead arbitrage if the auction prices were known in advance.")
+c1.metric("MID perfect-foresight profit", f"£{base:,.0f}", help="Upper bound: profit if the MID index prices were known in advance.")
 c2.metric("Our forecast model", f"£{model:,.0f}", f"{model / base * 100:.0f}% of baseline")
 c3.metric("Naive forecast (last week)", f"£{naive:,.0f}", f"{naive / base * 100:.0f}% of baseline", delta_color="off")
 c4.metric("Forecast error (MAE)", f"£{mae_model:.1f}/MWh", f"{(mae_model / mae_naive - 1) * 100:.0f}% vs naive £{mae_naive:.1f}", delta_color="inverse")
 
 st.success(
     f"**Finding:** the gradient-boosted model, using wind and demand forecasts plus price history, captures "
-    f"**{model / base * 100:.0f}%** of the MID baseline profit versus **{naive / base * 100:.0f}%** for repeating "
+    f"**{model / base * 100:.0f}%** of the perfect-foresight MID profit versus **{naive / base * 100:.0f}%** for repeating "
     f"last week's prices, and cuts forecast error by **{(1 - mae_model / mae_naive) * 100:.0f}%**. "
     f"It beat the naive forecast on **{int((daily.profit_mid_forecast > daily.profit_mid_naive).sum())} of "
     f"{len(daily)} days**."
@@ -65,8 +65,8 @@ with st.expander("How the strategies work", expanded=False):
         """
 | Strategy | Optimizes on | Settled at | Role |
 |---|---|---|---|
-| **MID baseline** | published day-ahead (MID) price | MID | Benchmark: auction result known |
-| **MID forecast model** | our forecast of MID, made before the auction | actual MID | Headline model |
+| **MID perfect foresight** | actual MID prices, known in advance | MID | Upper bound (not achievable) |
+| **MID forecast model** | our forecast of MID, made at D-1 08:00 UTC | actual MID | Headline model |
 | **MID naive** | same half-hour one week earlier | actual MID | Simple benchmark |
 | **Imbalance forecast** *(experimental)* | forecast imbalance price | imbalance price | Different market |
 | **Imbalance perfect foresight** *(experimental)* | actual imbalance price | imbalance price | Unattainable upper bound |
@@ -86,7 +86,7 @@ with left:
     show_imb = st.checkbox("Show imbalance-price strategies (experimental, different settlement price)", value=False)
     cum = daily.set_index("date").filter(like="profit_").cumsum()
     fig = go.Figure()
-    lines = [("profit_mid_baseline", "MID baseline", GREY, "solid"),
+    lines = [("profit_mid_baseline", "MID perfect foresight", GREY, "solid"),
              ("profit_mid_forecast", "MID forecast model", GREEN, "solid"),
              ("profit_mid_naive", "MID naive (last week)", AMBER, "dash")]
     if show_imb:
@@ -105,7 +105,7 @@ with right:
     fig = go.Figure()
     fig.add_bar(x=m.index, y=m["naive"], name="Naive (last week)", marker_color=AMBER)
     fig.add_bar(x=m.index, y=m["model"], name="Our model", marker_color=GREEN)
-    fig.update_layout(barmode="group", title="Day-ahead forecast error by month (£/MWh MAE)", height=380,
+    fig.update_layout(barmode="group", title="MID forecast error by month (£/MWh MAE)", height=380,
                       margin=dict(l=10, r=10, t=40, b=10), legend=dict(orientation="h", y=-0.15))
     st.plotly_chart(fig, use_container_width=True)
     if m["days"].min() < 15:
@@ -141,7 +141,7 @@ st.plotly_chart(fig, use_container_width=True)
 st.divider()
 st.subheader("Summary by strategy")
 summary = pd.DataFrame({
-    "Strategy": ["MID baseline", "MID forecast model", "MID naive", "Imbalance forecast model*", "Imbalance perfect foresight*"],
+    "Strategy": ["MID perfect foresight", "MID forecast model", "MID naive", "Imbalance forecast model*", "Imbalance perfect foresight*"],
     "Settled at": ["MID", "MID", "MID", "Imbalance", "Imbalance"],
     "Total profit (£)": [tot[c] for c in ["profit_mid_baseline", "profit_mid_forecast", "profit_mid_naive",
                                            "profit_imbalance_forecast", "profit_imbalance_perfect"]],
@@ -158,7 +158,7 @@ st.caption("*Experimental. Imbalance and MID profits use different settlement pr
 with st.expander("Caveats and what this does not show", expanded=True):
     st.markdown(
         f"""
-- **MID trading is idealised:** the MID strategies assume the battery can trade its full schedule in the day-ahead auction at the MID price, with no fees, no volume limits and no imbalance exposure.
+- **MID is an index, not a tradable price:** it is published by Elexon as each half-hour happens (it is not the day-ahead auction result). The MID strategies assume the battery can buy and sell at the MID price with no fees, volume limits or price impact. See the *Max Revenue* page for costs.
 - **Imbalance profits are theoretical:** the imbalance price is only known after the fact, and a battery cannot freely trade at it. The perfect-foresight figure is an upper bound, not an achievable result.
 - **Limited sample:** {meta['test_days']} test days in one season; model settings were not tuned and this is a single run. Results will differ in winter and in other years.
 - **Other revenue streams** (frequency response, capacity market, Balancing Mechanism) are not modelled, and degradation cost is £{b['degradation_cost_gbp_per_mwh']:.0f}/MWh.

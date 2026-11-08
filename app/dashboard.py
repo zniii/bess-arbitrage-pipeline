@@ -64,7 +64,7 @@ def load_gold_schedules() -> pd.DataFrame:
 # Header & Data Loading
 # -----------------------------------------------------------------------------
 st.title("⚡ BESS Arbitrage & Dispatch Dashboard")
-st.caption("Headline: dispatch optimized on our day-ahead (MID) price forecast and settled at the actual MID price")
+st.caption("Headline: dispatch optimized on our MID price forecast and settled at the actual MID price")
 
 try:
     df_all = load_gold_schedules()
@@ -88,7 +88,7 @@ latest = pd.to_datetime(df_kpi["settlementDate"]).max()
 window = df_kpi[pd.to_datetime(df_kpi["settlementDate"]) > latest - pd.Timedelta(days=PERIODS[period_label])]
 
 STRATEGIES = {  # column -> (label, colour, experimental?)
-    "profit_mid_baseline_gbp": ("MID baseline (auction result known)", "#94a3b8", False),
+    "profit_mid_baseline_gbp": ("MID perfect foresight (upper bound)", "#94a3b8", False),
     "profit_mid_forecast_gbp": ("MID forecast model (ours)", "#10b981", False),
     "profit_imbalance_forecast_gbp": ("Imbalance forecast model", "#8b5cf6", True),
     "profit_imbalance_perfect_gbp": ("Imbalance perfect foresight (upper bound)", "#f59e0b", True),
@@ -100,7 +100,7 @@ p_profit = window["profit_mid_forecast_gbp"].sum()
 p_base = window["profit_mid_baseline_gbp"].sum()
 c1, c2, c3, c4, c5 = st.columns(5)
 c1.metric("Net Profit (MID forecast model)", f"£{p_profit:,.2f}")
-c2.metric("MID Baseline", f"£{p_base:,.2f}")
+c2.metric("MID Perfect Foresight", f"£{p_base:,.2f}")
 c3.metric("Baseline Captured", f"{(p_profit / p_base * 100) if p_base else 0:.0f}%")
 c4.metric("Cycles (EFC)", f"{window['equivalent_full_cycles'].sum():.2f}")
 c5.metric("MID Forecast MAE", f"£{window['mid_forecast_mae_gbp_per_mwh'].mean():.2f}/MWh")
@@ -189,7 +189,7 @@ fig.add_trace(
         y=df_day["price_forecast"],
         mode="lines",
         line=dict(color="#8b5cf6", width=2, dash="dot"),
-        name="Day-ahead Forecast (£/MWh)",
+        name="MID Forecast (£/MWh)",
     ),
     row=1,
     col=1,

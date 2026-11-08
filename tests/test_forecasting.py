@@ -67,14 +67,19 @@ def test_settlement_uses_actual_prices_not_forecast():
     assert misled.net_profit_gbp <= perfect.net_profit_gbp + 1e-6
 
 
-def test_mid_features_allow_1day_lag_but_not_same_day():
+def test_mid_features_use_only_data_known_at_decision_time():
+    """MID is published as each period happens, so only part of D-1 exists at D-1 08:00 UTC.
+    With min_lag_days=2, corrupting anything from the start of D-1 must not change the features;
+    with min_lag_days=1 it would (that was a lookahead leak)."""
     h = synthetic_history().rename(columns={"system_price_gbp": "mid_price_gbp"})
     ts = day_timestamps("2026-09-05")
-    base = build_features(h, ts, target_col="mid_price_gbp", min_lag_days=1)
-    assert "price_lag_1d" in base.columns
+    corrupt_from = ts[0] - pd.Timedelta(days=1) + pd.Timedelta(hours=8)   # decision time D-1 08:00 UTC
     h2 = h.copy()
-    h2.loc[h2["interval_start_utc"] >= ts[0], "mid_price_gbp"] = 1e6  # corrupt delivery day onward
-    pd.testing.assert_frame_equal(base, build_features(h2, ts, target_col="mid_price_gbp", min_lag_days=1))
+    h2.loc[h2["interval_start_utc"] >= corrupt_from, "mid_price_gbp"] = 1e6
+    safe = build_features(h, ts, target_col="mid_price_gbp", min_lag_days=2)
+    pd.testing.assert_frame_equal(safe, build_features(h2, ts, target_col="mid_price_gbp", min_lag_days=2))
+    leaky = build_features(h, ts, target_col="mid_price_gbp", min_lag_days=1)
+    assert not leaky.equals(build_features(h2, ts, target_col="mid_price_gbp", min_lag_days=1))
 
 
 def test_exogenous_uses_only_publications_before_cutoff():

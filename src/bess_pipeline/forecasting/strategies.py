@@ -4,8 +4,9 @@ Dispatch strategies compared in the pipeline and dashboard.
 Settlement basis matters, so each strategy states it:
 
 * ``mid_baseline``       optimize on the published MID price, settle at MID
-                         (day-ahead arbitrage with the auction result known).
-* ``mid_forecast``       optimize on OUR forecast of MID made before the auction,
+                         (upper bound: MID prices known in advance; MID is a market index published
+                         as each period happens, not the day-ahead auction result).
+* ``mid_forecast``       optimize on OUR forecast of MID made at D-1 08:00 UTC,
                          settle at the actual MID. Value of the model = how close
                          this gets to ``mid_baseline``.
 * ``imbalance_forecast`` (experimental) optimize on a forecast of the imbalance
