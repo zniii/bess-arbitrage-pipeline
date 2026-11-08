@@ -12,8 +12,8 @@ import pandas as pd
 import plotly.graph_objects as go
 import streamlit as st
 
-DATA = Path(__file__).resolve().parent / "data"
-GREEN, GREY, AMBER, BLACK, RED = "#10b981", "#94a3b8", "#f59e0b", "#0f172a", "#ef4444"
+DATA = Path(__file__).resolve().parent.parent / "data"
+GREEN, GREY, AMBER, BLUE, RED = "#10b981", "#94a3b8", "#f59e0b", "#3b82f6", "#ef4444"
 
 st.set_page_config(page_title="BESS Forecasting Findings", page_icon="🔮", layout="wide")
 
@@ -39,7 +39,7 @@ perfect, model, naive = B["perfect_after_costs_soc_carry"], B["achievable_after_
 b = meta["battery"]
 wins = int((daily["net_profit_gbp"] > daily["naive_net_gbp"]).sum())
 
-st.title("🔮 Can a forecast capture day-ahead battery arbitrage?")
+st.title("Can a forecast capture day-ahead battery arbitrage?")
 st.markdown(
     f"A **{b['power_mw']:.0f} MW / {b['energy_mwh']:.0f} MWh** battery in Great Britain on the **N2EX day-ahead auction price**, "
     f"back-tested over **{meta['test_days']} days ({meta['test_start']} to {meta['test_end']})**. Each day is planned at "
@@ -113,7 +113,7 @@ pick = st.select_slider("Delivery day", options=dates, value=dates[-1])
 day = kd[kd["date"].astype(str) == pick].copy()
 day["local"] = day["interval_start_utc"].dt.tz_convert("Europe/London").dt.tz_localize(None)
 fig = go.Figure()
-fig.add_scatter(x=day["local"], y=day["da_actual"], name="Actual auction price", line=dict(color=BLACK, width=3, shape="hv"))
+fig.add_scatter(x=day["local"], y=day["da_actual"], name="Actual auction price", line=dict(color=BLUE, width=3, shape="hv"))
 fig.add_scatter(x=day["local"], y=day["da_model"], name="Our forecast", line=dict(color=GREEN, width=2.5, shape="hv"))
 fig.add_scatter(x=day["local"], y=day["da_naive"], name="Naive (last week)", line=dict(color=AMBER, width=2, dash="dash", shape="hv"))
 fig.update_layout(height=360, hovermode="x unified", yaxis_title="£/MWh", margin=dict(l=10, r=10, t=10, b=10),

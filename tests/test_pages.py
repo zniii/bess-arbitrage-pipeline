@@ -13,7 +13,7 @@ def run(path: Path) -> AppTest:
 
 
 def test_findings_page_loads_with_headline_metrics():
-    at = run(APP / "Findings.py")
+    at = run(APP / "pages" / "Findings.py")
     assert not at.exception, [e.value for e in at.exception]
     labels = [m.label for m in at.metric]
     assert "Our forecast model" in labels and "Forecast error (MAE)" in labels
@@ -22,7 +22,7 @@ def test_findings_page_loads_with_headline_metrics():
 
 
 def test_max_revenue_page_loads_and_period_switching_works():
-    at = run(APP / "pages" / "Max_Revenue.py")
+    at = run(APP / "Max_Revenue.py")
     assert not at.exception, [e.value for e in at.exception]
     assert "Expected net profit" in [m.label for m in at.metric]
     for period in ("7 days", "30 days", "1 day"):
@@ -32,6 +32,6 @@ def test_max_revenue_page_loads_and_period_switching_works():
     assert not at.exception
 
 
-@pytest.mark.parametrize("page", ["Findings.py", "pages/Max_Revenue.py"])
+@pytest.mark.parametrize("page", ["pages/Findings.py", "Max_Revenue.py"])
 def test_pages_do_not_reference_removed_dashboard(page):
     assert "gold_data" not in (APP / page).read_text()

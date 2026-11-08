@@ -14,7 +14,7 @@ import plotly.graph_objects as go
 import streamlit as st
 from plotly.subplots import make_subplots
 
-DATA = Path(__file__).resolve().parent.parent / "data"
+DATA = Path(__file__).resolve().parent / "data"
 BLUE, BLACK, GREEN, RED, PURPLE, GREY, AMBER = "#3b82f6", "#0f172a", "#10b981", "#ef4444", "#8b5cf6", "#94a3b8", "#f59e0b"
 ETA = 0.85  # round-trip efficiency
 
@@ -41,7 +41,8 @@ plan["local"] = plan["interval_start_utc"].dt.tz_convert("Europe/London").dt.tz_
 known = roll[roll["actual_known"]].copy()
 last_day = known["date"].max()
 
-st.title("💷 Highest revenue from day-ahead price forecasting, net of costs")
+st.title("BESS Optimization")
+st.subheader("Highest revenue from day-ahead price forecasting")
 st.caption("Price = N2EX GB day-ahead auction (NESO data, hourly). The auction for tomorrow clears at ~09:20 UK today, so plans are "
            "made at 08:00 UTC from a forecast and valued afterwards at the actual auction price.")
 
@@ -70,6 +71,21 @@ with tab_plan:
     day = plan[plan["date"] == pick].reset_index(drop=True)
     r = roll[roll["date"].dt.strftime("%Y-%m-%d") == pick].iloc[0]
     is_known = bool(day["actual_known"].iloc[0])
+
+    # KPIs first, then the chart
+    other = r["trading_fees_gbp"] + r["degradation_gbp"]
+    m1, m2, m3, m4, m5 = st.columns(5)
+    m1.metric("Expected revenue", f"£{r['expected_revenue_gbp']:,.0f}", help="Discharge valued at the forecast price.")
+    m2.metric("Expected charging cost", f"£{r['expected_cost_gbp']:,.0f}")
+    m3.metric("Degradation + fees", f"£{other:,.0f}")
+    exp_net = r["expected_net_gbp"]
+    m4.metric("Expected net profit", f"£{after_share(exp_net):,.0f}")
+    ratio = summ["calibration"]["realised_over_expected"]
+    if is_known:
+        m5.metric("Realised net profit", f"£{after_share(r['net_profit_gbp']):,.0f}", f"{r['net_profit_gbp'] / exp_net * 100 - 100:+.0f}% vs expected" if exp_net else None)
+    else:
+        m5.metric("Calibrated estimate", f"£{after_share(exp_net * ratio):,.0f}",
+                  help=f"Expected × {ratio:.2f}: over the backtest, realised profit was {ratio:.0%} of expected.")
 
     fig = make_subplots(rows=3, cols=1, shared_xaxes=True, vertical_spacing=0.07, row_heights=[0.4, 0.3, 0.3],
                         subplot_titles=("Day-ahead price: forecast vs actual (£/MWh)",
@@ -100,19 +116,6 @@ with tab_plan:
     c1.markdown("**Charge (buy)**  \n" + "  \n".join(windows("charge_mw")))
     c2.markdown("**Discharge (sell)**  \n" + "  \n".join(windows("discharge_mw")))
 
-    other = r["trading_fees_gbp"] + r["degradation_gbp"]
-    m1, m2, m3, m4, m5 = st.columns(5)
-    m1.metric("Expected revenue", f"£{r['expected_revenue_gbp']:,.0f}", help="Discharge valued at the forecast price.")
-    m2.metric("Expected charging cost", f"£{r['expected_cost_gbp']:,.0f}")
-    m3.metric("Degradation + fees", f"£{other:,.0f}")
-    exp_net = r["expected_net_gbp"]
-    m4.metric("Expected net profit", f"£{after_share(exp_net):,.0f}")
-    ratio = summ["calibration"]["realised_over_expected"]
-    if is_known:
-        m5.metric("Realised net profit", f"£{after_share(r['net_profit_gbp']):,.0f}", f"{r['net_profit_gbp'] / exp_net * 100 - 100:+.0f}% vs expected" if exp_net else None)
-    else:
-        m5.metric("Calibrated estimate", f"£{after_share(exp_net * ratio):,.0f}",
-                  help=f"Expected × {ratio:.2f}: over the backtest, realised profit was {ratio:.0%} of expected.")
     st.info(
         f"**How reliable is 'expected profit'?** Over {len(known)} settled days the plans' expected net profit "
         f"(£{summ['calibration']['expected_net_gbp']:,.0f}) was **{1 / ratio - 1:.0%} higher** than what was realised at the actual auction price "
@@ -150,7 +153,7 @@ with tab_hist:
                             subplot_titles=(f"{last_day:%Y-%m-%d}: half-hourly revenue and cost (£)", "Cumulative net profit (£)"))
         fig.add_bar(x=d1["local"], y=d1["revenue"], name="Revenue", marker_color=GREEN, row=1, col=1)
         fig.add_bar(x=d1["local"], y=-(d1["cost"] + d1["other"]), name="Charging cost + other costs", marker_color=RED, row=1, col=1)
-        fig.add_scatter(x=d1["local"], y=d1["net"].cumsum(), name="Cumulative net profit", line=dict(color=BLACK, width=3), row=2, col=1)
+        fig.add_scatter(x=d1["local"], y=d1["net"].cumsum(), name="Cumulative net profit", line=dict(color=BLUE, width=3), row=2, col=1)
         fig.update_layout(barmode="relative", height=520, hovermode="x unified", margin=dict(l=10, r=10, t=40, b=10),
                           legend=dict(orientation="h", y=-0.1))
         st.plotly_chart(fig, use_container_width=True)
