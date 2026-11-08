@@ -16,7 +16,7 @@ An automated data, forecasting and optimisation pipeline for a **10 MW / 20 MWh 
 6. presents results in Streamlit.
 
 **Where it started:** a manual backtest that optimised on the *actual* imbalance price (perfect foresight, so an unattainable upper bound), with one-day static results.
-**Where it ended:** a forecast-driven, cost-aware plan on the **N2EX day-ahead auction price**, with a daily-update job, a live dashboard, and two offline results pages.
+**Where it ended:** a forecast-driven, cost-aware plan on the **N2EX day-ahead auction price**, with a daily-update job and two offline Streamlit pages (Findings, Max Revenue). The original live S3 dashboard was removed.
 
 ---
 
@@ -79,7 +79,7 @@ An automated data, forecasting and optimisation pipeline for a **10 MW / 20 MWh 
 
 | Path | Used by | Strategy details |
 |---|---|---|
-| **Daily job** (`orchestration/daily_update.py`) | Live dashboard (reads S3/MinIO) | Per-day strategies; **battery reset to 10% SOC each day; no costs** |
+| **Daily job** (`orchestration/daily_update.py`) | Gold tables in S3/MinIO (no longer displayed by the app) | Per-day strategies; **battery reset to 10% SOC each day; no costs** |
 | **Report script** (`scripts/run_backtest_report.py`) | Findings and Max Revenue pages (offline) | **Cost-aware, SOC carried across days, end-of-day reserve, tuned terminal value** |
 
 The daily job is idempotent: it finds missing days in a trailing window (default 30), backfills them, and a second run does nothing. Its schedule is a GitHub Actions cron (`17 6 * * *`).
@@ -98,9 +98,8 @@ bess-arbitrage-pipeline/
 ├── docs/PROJECT_SUMMARY.md          This document
 ├── sql/athena_external_tables.sql   Athena/Glue table DDL (silver, gold schedules, daily KPIs)
 ├── app/
-│   ├── dashboard.py                 Live dashboard: 1/7/30-day results from S3/MinIO, imbalance-model toggle
-│   ├── pages/1_Findings.py          Offline: does a forecast capture day-ahead arbitrage?
-│   ├── pages/2_Max_Revenue.py       Offline: plan for tomorrow, 1/7/30-day revenue, max vs achievable, sensitivity
+│   ├── Findings.py                  Landing page (offline): does a forecast capture day-ahead arbitrage?
+│   ├── pages/Max_Revenue.py         Offline: plan for tomorrow, 1/7/30-day revenue, max vs achievable, sensitivity
 │   └── data/                        Pre-computed results the offline pages read
 │       ├── rolling_daily.csv        Per-day revenue, costs, net, expected vs realised, SOC, naive, perfect, forecast error
 │       ├── plan_halfhourly.csv      Half-hourly actual/forecast price and the charge/discharge/SOE plan (incl. tomorrow)
@@ -165,11 +164,11 @@ plus `terminal value x final state of energy`.
 
 | Strategy | Decides on | Settled at | Where used |
 |---|---|---|---|
-| `da_forecast` (headline) | Our day-ahead forecast | Actual day-ahead price | Daily job, dashboard, report |
+| `da_forecast` (headline) | Our day-ahead forecast | Actual day-ahead price | Daily job, report |
 | `da_perfect` | Actual day-ahead prices | Actual day-ahead price | Upper bound |
 | Naive | Same hour last week | Actual day-ahead price | Benchmark (report) |
-| `imbalance_forecast` *(experimental)* | Imbalance-price forecast | Imbalance price | Dashboard toggle |
-| `imbalance_perfect` *(experimental)* | Actual imbalance prices | Imbalance price | Dashboard toggle |
+| `imbalance_forecast` *(experimental)* | Imbalance-price forecast | Imbalance price | Daily job only |
+| `imbalance_perfect` *(experimental)* | Actual imbalance prices | Imbalance price | Daily job only |
 
 Imbalance and day-ahead profits use different settlement prices and are not directly comparable.
 
@@ -229,9 +228,9 @@ Costs: £8/MWh degradation (placeholder), £0 fee, 4 MWh end-of-day reserve, cha
 
 ## 10. The pages
 
-* **Live dashboard (`app/dashboard.py`)**: reads Gold results from S3/MinIO via DuckDB. 1-day / 7-day / 30-day selector; daily profit bars; forecast vs actual price, dispatch and state of energy for a chosen day; sidebar toggle for the experimental imbalance models.
-* **Findings (`1_Findings.py`)**: headline result, cumulative profit (perfect, model, naive), forecast error by month, forecast vs actual for any day, daily advantage over naive, summary table, caveats, CSV download.
-* **Max Revenue (`2_Max_Revenue.py`)**, three tabs:
+* **No live dashboard.** The original `app/dashboard.py` (S3-backed, descended from the v1.0 file) was removed; it remains in git history (v1.0 `52738b0`, last version `022f68c`). The Gold results written by the daily job are not displayed by the app.
+* **Findings (`app/Findings.py`, landing page)**: headline result, cumulative profit (perfect, model, naive), forecast error by month, forecast vs actual for any day, daily advantage over naive, summary table, caveats, CSV download.
+* **Max Revenue (`app/pages/Max_Revenue.py`)**, three tabs:
   1. *Forecast & plan*: the day-ahead forecast, the charge/discharge/state-of-energy plan, charge and discharge windows in UK time, expected profit and a calibrated estimate (any day, default tomorrow).
   2. *Revenue history (1 / 7 / 30 days)*: revenue, charging cost, degradation and fees, net profit, cumulative line.
   3. *Maximum vs achievable*: waterfall from the theoretical maximum to the achievable result, the sensitivity heatmap, break-even sell prices, and a revenue-share slider.
@@ -240,7 +239,7 @@ Costs: £8/MWh degradation (placeholder), £0 fee, 4 MWh end-of-day reserve, cha
 
 ## 11. Infrastructure
 
-* **Storage:** S3 (`AWS_S3_BUCKET`, region `eu-west-2`) or local **MinIO** by setting `AWS_ENDPOINT_URL` (see `docker-compose.yml`; bucket `bess-datalake`). One configurable endpoint in `AWSDataLakeManager` and in the dashboard's DuckDB connection.
+* **Storage:** S3 (`AWS_S3_BUCKET`, region `eu-west-2`) or local **MinIO** by setting `AWS_ENDPOINT_URL` (see `docker-compose.yml`; bucket `bess-datalake`). One configurable endpoint in `AWSDataLakeManager`.
 * **Query layer:** DuckDB (`httpfs`) and optional Amazon Athena DDL.
 * **Scheduling:** `.github/workflows/daily-update.yml` (needs the AWS secrets).
 * **Session environment (cloud sandbox):** a dedicated environment `bess-arbitrage-pipeline` allows `data.elexon.co.uk`, `api.carbonintensity.org.uk`, `www.neso.energy` and `api.neso.energy`.
@@ -279,8 +278,8 @@ python -m bess_pipeline.orchestration.pipeline_runner --start-date 2026-08-01 --
 python scripts/run_backtest_report.py --start 2026-08-01 --end 2026-11-08 \
     [--degradation 8 --fee 0 --reserve-mwh 4 --cache-dir DIR]
 
-# Dashboard and pages
-streamlit run app/dashboard.py
+# Streamlit app (Findings landing page + Max Revenue)
+streamlit run app/Findings.py
 
 # Tests (the live Elexon test needs internet)
 pytest
@@ -290,11 +289,11 @@ pytest
 
 ## 14. Limitations and what has not been verified
 
-* **Never run against real S3 or MinIO:** the cloud session had no AWS credentials or Docker. The dashboard was tested only with Streamlit's test harness on synthetic Gold data. The offline pages were checked in a browser.
+* **Never run against real S3 or MinIO:** the cloud session had no AWS credentials or Docker. The two Streamlit pages were checked in a browser and with Streamlit's test harness.
 * **Idealised trading:** assumes the whole schedule trades at the hourly auction price with no volume limits or price impact. Real orders are submitted before the price is known, and linking hours through the state of charge is hard in practice. Results are an estimate, not a trading result.
 * **Costs are incomplete:** degradation is a placeholder, fees default to £0, and network/levy charges, taxes, and revenue share (except the slider) are not included.
 * **Small sample:** one autumn (99 days), untuned model settings, a single run. Results will differ in winter and other years.
-* **Daily job vs report:** the live daily job still uses the simpler per-day strategies (daily reset, no costs); only the offline pages use the cost-aware, charge-carrying strategy.
+* **Daily job vs report:** the daily job still uses the simpler per-day strategies (daily reset, no costs), and its output is not displayed; only the offline pages use the cost-aware, charge-carrying strategy.
 * **Not modelled:** frequency response, capacity market, Balancing Mechanism revenue, forecast uncertainty ranges, intra-day re-forecasting, the Carbon Intensity forecast.
 * **Wind/demand publication times** are taken as published by Elexon; the 08:00 UTC cutoff is conservative against the ~09:20 UK auction deadline.
 
@@ -302,6 +301,6 @@ pytest
 
 1. Fix the forecast bias and tune the model (more features, quantile outputs for risk-aware dispatch).
 2. Put the real degradation cost (capex and warranted cycles), trading fee and network charges into the model.
-3. Move the cost-aware, charge-carrying strategy into the daily job and live dashboard.
+3. Move the cost-aware, charge-carrying strategy into the daily job, and decide whether to display its results.
 4. Test against real S3/MinIO and deploy the daily schedule.
 5. Add intra-day re-forecasting and other revenue streams.

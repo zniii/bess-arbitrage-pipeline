@@ -2,7 +2,7 @@
 
 An automated, cloud-native data and optimization pipeline designed for a 10 MW / 20 MWh Battery Energy Storage System (BESS) operating within the Great Britain (GB) wholesale power market.
 
-The system ingests half-hourly settlement prices from the Elexon Insights API, conforms telemetry into a partitioned S3 Medallion Lakehouse, formulates an optimal physical dispatch schedule using Mixed-Integer Linear Programming (MILP), and delivers commercial analytics via an interactive Streamlit dashboard.
+The system ingests half-hourly settlement prices from the Elexon Insights API, conforms telemetry into a partitioned S3 Medallion Lakehouse, formulates an optimal physical dispatch schedule using Mixed-Integer Linear Programming (MILP), and presents the results in a Streamlit app (**Findings** and **Max Revenue** pages, `app/Findings.py`).
 
 ---
 
@@ -43,16 +43,14 @@ Strategies run by the daily job (`strategy` column in `gold/dispatch_schedules/`
 |---|---|---|---|
 | `da_forecast` | **our forecast** of the day-ahead price | actual day-ahead price | **Headline** |
 | `da_perfect` | actual day-ahead prices | actual day-ahead price | Upper bound |
-| `imbalance_forecast` | forecast imbalance (system) price | imbalance price | Experimental (dashboard toggle) |
+| `imbalance_forecast` | forecast imbalance (system) price | imbalance price | Experimental (daily job only) |
 | `imbalance_perfect` | actual imbalance prices | imbalance price | Experimental upper bound |
 
 These daily-job strategies reset the battery to 10% SOC each day and ignore costs. The **Max Revenue** page uses the cost-aware strategy from `forecasting/rolling.py`: state of charge carried across days, degradation (default £8/MWh discharged, a placeholder), trading fee (default £0), an end-of-day reserve (default 4 MWh) and a terminal value for stored energy (tuned on the first 40% of days, judged on the rest). Network and levy charges are not modelled. `scripts/run_backtest_report.py` produces everything those pages read (`app/data/`): the bridge from the theoretical maximum to the achievable result, a degradation x fee sensitivity grid, tomorrow's plan with expected profit, and 1/7/30-day revenue history.
 
 > No free hosted API for GB price *forecasts* was found, so the model is built in-repo. The NESO Carbon Intensity forecast was considered as a further feature but is not wired in. Trading is idealised: no volume limits or price impact, and real orders are submitted before the price is known.
 
-The live dashboard (`app/dashboard.py`) shows 1-day, 7-day and 30-day views of the daily-job results from S3/MinIO; the imbalance models are hidden unless enabled with the sidebar checkbox.
-
-**Older data in the bucket:** schedules written by the original `pipeline_runner` (no `strategy` column) are still read and shown as `legacy_imbalance_perfect`; until `gold/daily_kpis/` exists, daily figures are derived from the schedules and labelled as such. Running the daily update adds the forecast-based results and the KPI table. To try the dashboard on a local folder laid out like the bucket, set `BESS_LOCAL_DATA_DIR=/path/to/folder` (it needs `gold/dispatch_schedules/...` and optionally `gold/daily_kpis/...`).
+The daily job's Gold results (`gold/dispatch_schedules/`, `gold/daily_kpis/`) are no longer displayed by the app; the Streamlit pages read the pre-computed files in `app/data/` written by `scripts/run_backtest_report.py`. Schedules written by the original `pipeline_runner` use an older format (no `strategy` column).
 
 ---
 
@@ -67,7 +65,7 @@ cp .env.example .env    # then fill in credentials
 ```
 
 ### Storage: AWS S3 or local MinIO
-Set `AWS_ENDPOINT_URL=http://localhost:9000` (see `.env.example`) and run `docker compose up -d` followed by `docker compose run --rm create-bucket`; the pipeline and dashboard then use MinIO instead of AWS. Leave `AWS_ENDPOINT_URL` unset to use real S3.
+Set `AWS_ENDPOINT_URL=http://localhost:9000` (see `.env.example`) and run `docker compose up -d` followed by `docker compose run --rm create-bucket`; the pipeline then uses MinIO instead of AWS. Leave `AWS_ENDPOINT_URL` unset to use real S3.
 
 ### Run
 ```bash
@@ -77,10 +75,10 @@ python -m bess_pipeline.orchestration.daily_update --window-days 30
 # Original perfect-foresight backtest for specific dates
 python -m bess_pipeline.orchestration.pipeline_runner --start-date 2026-08-01 --end-date 2026-08-03
 
-# Dashboard (live Gold results from S3/MinIO); the Findings and Max Revenue pages (sidebar) work offline
-streamlit run app/dashboard.py
+# Streamlit app: Findings (landing page) and Max Revenue (sidebar). Works offline from app/data
+streamlit run app/Findings.py
 
-# Regenerate the backtest behind the Findings page (needs internet access to Elexon)
+# Regenerate the results behind both pages (needs internet access to Elexon and NESO)
 python scripts/run_backtest_report.py --start 2026-08-01 --end 2026-11-08
 
 # Tests (test_live_small_window_fetch needs internet access to Elexon)

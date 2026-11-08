@@ -12,7 +12,7 @@ import pandas as pd
 import plotly.graph_objects as go
 import streamlit as st
 
-DATA = Path(__file__).resolve().parent.parent / "data"
+DATA = Path(__file__).resolve().parent / "data"
 GREEN, GREY, AMBER, BLACK, RED = "#10b981", "#94a3b8", "#f59e0b", "#0f172a", "#ef4444"
 
 st.set_page_config(page_title="BESS Forecasting Findings", page_icon="🔮", layout="wide")

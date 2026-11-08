@@ -1,5 +1,5 @@
 """
-Dispatch strategies compared in the daily job and the live dashboard.
+Dispatch strategies compared in the daily job.
 
 Prices are the N2EX GB day-ahead auction (NESO) unless stated. The auction for D clears on D-1,
 so a plan made at D-1 08:00 UTC must be based on a FORECAST of it.
@@ -11,7 +11,7 @@ so a plan made at D-1 08:00 UTC must be based on a FORECAST of it.
 * ``imbalance_perfect``  (experimental) actual imbalance prices; unattainable upper bound.
 
 These per-day strategies reset the battery daily and ignore costs. The cost-aware, SOC-carrying
-strategy lives in ``rolling.py`` and the Max Revenue page.
+strategy lives in ``rolling.py`` and feeds the Max Revenue page.
 """
 
 import pandas as pd
