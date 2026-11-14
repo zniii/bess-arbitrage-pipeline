@@ -18,8 +18,13 @@ GREEN, GREY, AMBER, BLUE, RED = "#10b981", "#94a3b8", "#f59e0b", "#3b82f6", "#ef
 st.set_page_config(page_title="BESS Forecasting Findings", page_icon="🔮", layout="wide")
 
 
-@st.cache_data
-def load():
+def _stamp() -> tuple:
+    """Changes whenever a results file changes, so the cache below can't serve stale data after a refresh."""
+    return tuple((p.name, p.stat().st_mtime_ns) for p in sorted(DATA.glob("*")) if p.suffix in {".csv", ".json"})
+
+
+@st.cache_data(ttl=3600)
+def load(stamp):
     daily = pd.read_csv(DATA / "rolling_daily.csv", parse_dates=["date"])
     plan = pd.read_csv(DATA / "plan_halfhourly.csv", parse_dates=["interval_start_utc"])
     summ = json.loads((DATA / "rolling_summary.json").read_text())
@@ -28,7 +33,7 @@ def load():
 
 
 try:
-    daily_all, plan, summ, meta = load()
+    daily_all, plan, summ, meta = load(_stamp())
 except FileNotFoundError:
     st.error("Backtest results not found. Run `python scripts/run_backtest_report.py --start ... --end ...`.")
     st.stop()

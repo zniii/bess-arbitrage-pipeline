@@ -21,8 +21,13 @@ ETA = 0.85  # round-trip efficiency
 st.set_page_config(page_title="BESS Max Revenue", page_icon="💷", layout="wide")
 
 
-@st.cache_data
-def load():
+def _stamp() -> tuple:
+    """Changes whenever a results file changes, so the cache below can't serve stale data after a refresh."""
+    return tuple((p.name, p.stat().st_mtime_ns) for p in sorted(DATA.glob("*")) if p.suffix in {".csv", ".json"})
+
+
+@st.cache_data(ttl=3600)
+def load(stamp):
     plan = pd.read_csv(DATA / "plan_halfhourly.csv", parse_dates=["interval_start_utc"])
     roll = pd.read_csv(DATA / "rolling_daily.csv", parse_dates=["date"])
     sens = pd.read_csv(DATA / "sensitivity.csv")
@@ -31,7 +36,7 @@ def load():
 
 
 try:
-    plan, roll, sens, summ = load()
+    plan, roll, sens, summ = load(_stamp())
 except FileNotFoundError:
     st.error("Results not found. Run `python scripts/run_backtest_report.py --start ... --end ...`.")
     st.stop()
