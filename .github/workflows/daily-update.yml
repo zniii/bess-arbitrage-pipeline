@@ -3,9 +3,16 @@ on:
   schedule:
     - cron: "17 6 * * *"   # after the previous day has fully settled
   workflow_dispatch:
+permissions:
+  contents: write           # lets the job commit refreshed app/data back to main
+concurrency:
+  group: daily-update
+  cancel-in-progress: false
 jobs:
   update:
     runs-on: ubuntu-latest
+    env:
+      REPORT_START: "2026-08-01"   # first day of the dashboard's walk-forward series
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -17,3 +24,30 @@ jobs:
           AWS_S3_BUCKET: ${{ secrets.AWS_S3_BUCKET }}
           AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
           AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+
+      # Refresh the files the Streamlit pages read (app/data). Public Elexon/NESO data only: no AWS needed.
+      - name: Restore wind/demand cache
+        if: ${{ !cancelled() }}
+        uses: actions/cache@v4
+        with:
+          path: .cache/bess
+          key: bess-cache-${{ github.run_id }}
+          restore-keys: bess-cache-
+      - name: Regenerate dashboard data
+        if: ${{ !cancelled() }}
+        run: |
+          END=$(TZ=Europe/London date -d yesterday +%F)
+          python scripts/run_backtest_report.py --start "$REPORT_START" --end "$END" \
+            --cache-dir .cache/bess --no-sensitivity
+      - name: Commit refreshed dashboard data
+        if: ${{ !cancelled() }}
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add app/data
+          if git diff --cached --quiet; then
+            echo "app/data unchanged"
+          else
+            git commit -m "chore: refresh dashboard data"
+            git push
+          fi
