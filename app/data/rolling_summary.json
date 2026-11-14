@@ -7,58 +7,58 @@
     "network_levy_charges": "not modelled (unknown)",
     "terminal_value_gbp_per_mwh": 25.0,
     "terminal_value_tuning_grid": {
-      "0.0": 32101.07,
-      "25.0": 32101.58,
-      "50.0": 32101.58,
-      "75.0": 32101.58,
-      "100.0": 32101.58,
-      "125.0": 29532.96,
-      "150.0": 22796.17
+      "0.0": 34544.39,
+      "25.0": 34544.91,
+      "50.0": 34544.91,
+      "75.0": 34544.91,
+      "100.0": 34544.91,
+      "125.0": 32918.23,
+      "150.0": 26837.82
     },
-    "tuned_on_days": 39,
-    "evaluated_days": 99,
+    "tuned_on_days": 42,
+    "evaluated_days": 105,
     "revenue_share_applied": false
   },
   "bridge_gbp": {
-    "perfect_no_costs_daily_reset": 136298.98,
-    "perfect_no_costs_soc_carry": 136579.81,
-    "perfect_after_costs_soc_carry": 117527.14,
-    "achievable_after_costs_soc_carry": 96404.7,
-    "naive_after_costs_soc_carry": 85539.53
+    "perfect_no_costs_daily_reset": 144869.13,
+    "perfect_no_costs_soc_carry": 145292.88,
+    "perfect_after_costs_soc_carry": 125268.35,
+    "achievable_after_costs_soc_carry": 102105.96,
+    "naive_after_costs_soc_carry": 90468.77
   },
   "out_of_sample_gbp": {
-    "days": 60,
-    "perfect_after_costs": 78096.46,
-    "achievable_after_costs": 64303.12,
-    "naive_after_costs": 58363.48
+    "days": 63,
+    "perfect_after_costs": 82710.56,
+    "achievable_after_costs": 67561.05,
+    "naive_after_costs": 60927.39
   },
   "forecast_error_gbp_per_mwh": {
-    "model": 22.16,
-    "naive": 43.13
+    "model": 22.95,
+    "naive": 42.85
   },
   "achievable_breakdown_gbp": {
-    "revenue_gbp": 421339.24,
-    "charging_cost_gbp": 306542.05,
+    "revenue_gbp": 451932.0,
+    "charging_cost_gbp": 330539.49,
     "trading_fees_gbp": 0.0,
-    "degradation_gbp": 18392.49,
-    "net_profit_gbp": 96404.7
+    "degradation_gbp": 19286.56,
+    "net_profit_gbp": 102105.96
   },
   "calibration": {
-    "expected_net_gbp": 120598.65,
-    "realised_net_gbp": 96404.7,
-    "realised_over_expected": 0.799
+    "expected_net_gbp": 134199.11,
+    "realised_net_gbp": 102105.96,
+    "realised_over_expected": 0.761
   },
   "next_day": {
-    "date": "2026-11-09",
+    "date": "2026-11-15",
     "actual_published": false,
-    "expected_revenue_gbp": 10284.16,
-    "expected_charging_cost_gbp": 7869.81,
+    "expected_revenue_gbp": 3320.95,
+    "expected_charging_cost_gbp": 2266.63,
     "expected_fees_gbp": 0.0,
-    "expected_degradation_gbp": 236.02,
-    "expected_net_gbp": 2178.33,
+    "expected_degradation_gbp": 118.01,
+    "expected_net_gbp": 936.31,
     "start_soc_mwh": 4.0,
     "end_soc_mwh": 4.0,
     "realised_net_gbp": null
   },
-  "last_actual_day": "2026-11-07"
+  "last_actual_day": "2026-11-13"
 }
