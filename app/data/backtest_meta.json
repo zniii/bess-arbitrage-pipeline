@@ -1,9 +1,9 @@
 {
-  "generated_at_utc": "2026-11-24T17:49:32+00:00",
+  "generated_at_utc": "2026-11-25T17:16:50+00:00",
   "test_start": "2026-08-01",
-  "test_end": "2026-11-23",
+  "test_end": "2026-11-24",
   "history_start": "2021-09-20",
-  "test_days": 115,
+  "test_days": 116,
   "retrain_every_days": 14,
   "battery": {
     "power_mw": 10.0,
